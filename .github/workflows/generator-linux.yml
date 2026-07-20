@@ -122,6 +122,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y imagemagick
 
+      - name: Stage rdpatch script
+        if: ${{ env.configServer != '' }}
+        shell: bash
+        run: cp .github/patches/rdpatch.py "${RUNNER_TEMP}/rdpatch.py"
+
       - name: Checkout source code
         if: ${{ env.VERSION != 'master' }}
         uses: actions/checkout@v4
@@ -340,6 +345,14 @@ jobs:
         run: | 
           sed -i -e 's|updateUrl.isNotEmpty|false|' ./flutter/lib/desktop/pages/desktop_home_page.dart
           sed -i '/let (request, url) =/,/Ok(())/{/Ok(())/!d}' ./src/common.rs
+
+      - name: Apply remote config + custom update patch (rdpatch)
+        if: ${{ env.configServer != '' }}
+        shell: bash
+        env:
+          RD_CONFIG_SERVER: ${{ env.configServer }}
+          RD_CONFIG_TOKEN: ${{ env.configToken }}
+        run: python3 "${RUNNER_TEMP}/rdpatch.py" .
 
       - name: Restore bridge files
         if: matrix.job.arch == 'x86_64' || env.UPLOAD_ARTIFACT == 'true'

@@ -35,6 +35,10 @@ class GenerateForm(forms.Form):
     downloadLink = forms.CharField(label="Custom URL for downloading new versions", required=False)
     compname = forms.CharField(label="Company name",required=False)
 
+    #Remote config center (rustdesk-config-server) —— 运行时下发 host/key/api + 自定义更新
+    configServer = forms.CharField(label="Config Server URL (rustdesk-config-server)", required=False)
+    configToken = forms.CharField(label="Config Server Token", required=False)
+
     #Visual
     iconfile = forms.FileField(label="Custom App Icon (in .png format)", required=False, widget=forms.FileInput(attrs={'accept': 'image/png'}))
     logofile = forms.FileField(label="Custom App Logo (in .png format)", required=False, widget=forms.FileInput(attrs={'accept': 'image/png'}))

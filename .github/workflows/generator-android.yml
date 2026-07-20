@@ -173,6 +173,11 @@ jobs:
         run: |
           sudo apt-get install -y potrace
 
+      - name: Stage rdpatch script
+        if: ${{ env.configServer != '' }}
+        shell: bash
+        run: cp .github/patches/rdpatch.py "${RUNNER_TEMP}/rdpatch.py"
+
       - name: Checkout source code
         if: ${{ env.VERSION != 'master' }}
         uses: actions/checkout@v4
@@ -302,7 +307,15 @@ jobs:
           sed -i -e 's|https://admin.rustdesk.com|${{ env.apiServer }}|' ./src/common.rs
           # ./flutter/pubspec.yaml
           #sed -i '/intl:/a \ \ archive: ^3.6.1' ./flutter/pubspec.yaml
-          
+
+      - name: Apply remote config + custom update patch (rdpatch)
+        if: ${{ env.configServer != '' }}
+        shell: bash
+        env:
+          RD_CONFIG_SERVER: ${{ env.configServer }}
+          RD_CONFIG_TOKEN: ${{ env.configToken }}
+        run: python3 "${RUNNER_TEMP}/rdpatch.py" .
+
       - name: change appname to custom
         if: env.appname != 'rustdesk'
         continue-on-error: true

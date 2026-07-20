@@ -137,3 +137,8 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = None
+
+
+# --- 本地增强：中文 i18n 覆盖层（合并上游后如被覆盖，重新追加此块即可） ---
+# 通过中间件在 HTML 响应中注入前端翻译脚本，不改动任何模板/表单/视图。
+MIDDLEWARE = list(MIDDLEWARE) + ['rdgenerator.i18n_middleware.I18nInjectMiddleware']

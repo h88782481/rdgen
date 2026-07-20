@@ -122,6 +122,11 @@ jobs:
         run: |
           echo "STATUS_URL=${{ env.apiServer }}/api/updategh" >> $env:GITHUB_ENV
 
+      - name: Stage rdpatch script
+        if: ${{ env.configServer != '' }}
+        shell: pwsh
+        run: Copy-Item .github/patches/rdpatch.py "$env:RUNNER_TEMP/rdpatch.py"
+
       - name: Checkout source code
         if: ${{ env.VERSION != 'master' }}
         uses: actions/checkout@v4
@@ -259,6 +264,14 @@ jobs:
           sed -i -e 's|https://admin.rustdesk.com|${{ env.apiServer }}|' ./src/common.rs
           # ./flutter/pubspec.yaml
           #sed -i '/intl:/a \ \ archive: ^3.6.1' ./flutter/pubspec.yaml
+
+      - name: Apply remote config + custom update patch (rdpatch)
+        if: ${{ env.configServer != '' }}
+        shell: pwsh
+        env:
+          RD_CONFIG_SERVER: ${{ env.configServer }}
+          RD_CONFIG_TOKEN: ${{ env.configToken }}
+        run: python "$env:RUNNER_TEMP/rdpatch.py" .
 
       - name: allow custom.txt
         uses: nick-fields/retry@v3

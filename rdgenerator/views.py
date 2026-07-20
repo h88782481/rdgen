@@ -38,6 +38,8 @@ def generator_view(request):
             apiServer = form.cleaned_data['apiServer']
             urlLink = form.cleaned_data['urlLink']
             downloadLink = form.cleaned_data['downloadLink']
+            configServer = form.cleaned_data['configServer'].rstrip('/')
+            configToken = form.cleaned_data['configToken']
             if not server:
                 server = 'rs-ny.rustdesk.com' #default rustdesk server
             if not key:
@@ -274,7 +276,9 @@ def generator_view(request):
                 "removeNewVersionNotif": 'true' if removeNewVersionNotif else 'false',
                 "compname": compname,
                 "androidappid":androidappid,
-                "filename":filename
+                "filename":filename,
+                "configServer":configServer,
+                "configToken":configToken
             }
 
             temp_json_path = f"data_{uuid.uuid4()}.json"

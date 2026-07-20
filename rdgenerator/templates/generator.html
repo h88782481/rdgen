@@ -306,6 +306,18 @@
                     <label for="{{ form.compname.id_for_label }}">Company name for copyright (replaces Purslane Tech Pte. Ltd.):</label>
                     {{ form.compname }}<br><br>
             </div>
+
+            <div class="section">
+                <h2><i class="fas fa-cloud"></i> Remote Config Center (optional)</h2>
+                    <p style="opacity:.8;font-size:13px;margin:0 0 12px;">
+                        Point to your self-hosted rustdesk-config-server. When set, the client fetches host/key/api from this service on startup,
+                        and checks for updates through it (custom /version/latest direct download). Leave blank to disable.
+                    </p>
+                    <label for="{{ form.configServer.id_for_label }}">Config Server URL (e.g. https://cfg.example.com):</label>
+                    {{ form.configServer }}<br><br>
+                    <label for="{{ form.configToken.id_for_label }}">Config Server Token (must match CLIENT_TOKEN):</label>
+                    {{ form.configToken }}<br><br>
+            </div>
         </div>
         <div class="container">
             <div class="section">
