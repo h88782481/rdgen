@@ -123,6 +123,38 @@ def common_rs(text):
     )
     changed_any = changed_any or c
 
+    # P7a: key 隐藏层 —— get_key 在 option("key") 为空时读下发的 key(不写 option,故界面不显示)
+    text, c = sub_once(
+        r'    if key\.is_empty\(\) \{\n        key = config::RS_PUB_KEY\.to_owned\(\);\n    \}',
+        "    if key.is_empty() {\n"
+        "        let k = REMOTE_CFG_KEY.read().unwrap().clone();\n"
+        "        if !k.is_empty() {\n"
+        "            key = k;\n"
+        "        }\n"
+        "    }\n"
+        "    if key.is_empty() {\n"
+        "        key = config::RS_PUB_KEY.to_owned();\n"
+        "    }",
+        text,
+    )
+    changed_any = changed_any or c
+
+    # P7b: api 隐藏层 —— get_api_server_ 在 api(option) 为空时读下发的 api(不写 option,故不显示)
+    text, c = sub_once(
+        r'    if !api\.is_empty\(\) \{\n        return api\.to_owned\(\);\n    \}',
+        "    if !api.is_empty() {\n"
+        "        return api.to_owned();\n"
+        "    }\n"
+        "    {\n"
+        "        let a = REMOTE_CFG_API.read().unwrap().clone();\n"
+        "        if !a.is_empty() {\n"
+        "            return a;\n"
+        "        }\n"
+        "    }",
+        text,
+    )
+    changed_any = changed_any or c
+
     # 注入常量 + fetch_remote_config()(追加到文件末尾)
     if "REMOTE_CONFIG_SERVER" not in text:
         text += f'''
@@ -131,59 +163,73 @@ def common_rs(text):
 pub const REMOTE_CONFIG_SERVER: &str = "{SERVER}";
 pub const REMOTE_CONFIG_TOKEN: &str = "{TOKEN}";
 
-/// 启动时异步从自建服务器拉取 host/key/api 并写入本地配置(可覆盖编译期默认值)。
-/// 采用后台线程 + 短超时,拉取失败则沿用已持久化/编译期默认配置,不阻塞启动。
-/// 用 Once 保证进程内只拉取一次(global_init 可能被多个入口调用)。
+lazy_static::lazy_static! {{
+    // 隐藏层:不写入 option,故客户端设置界面不显示 host/key/api(与上游 sed 常量效果一致)。
+    // host 走 hbb_common 的 PROD_RENDEZVOUS_SERVER;key/api 走下面两个全局量,
+    // 由 patch 后的 get_key / get_api_server_ 在 option 为空时读取。
+    static ref REMOTE_CFG_KEY: std::sync::RwLock<String> = Default::default();
+    static ref REMOTE_CFG_API: std::sync::RwLock<String> = Default::default();
+}}
+
+/// 启动时从自建服务器拉取 host/key/api 写入“隐藏层”(不写 option,界面不显示)。
+/// 同步执行(独立线程 + join,避免与 tokio 运行时冲突),确保连接/注册前配置已就绪;
+/// 用 Once 保证进程内只拉取一次。拉取失败则回落到编译期默认(rdgen sed 的常量)。
 pub fn fetch_remote_config() {{
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {{
-        do_fetch_remote_config();
+        let _ = std::thread::spawn(|| {{
+            do_fetch_remote_config();
+        }})
+        .join();
     }});
 }}
 
 fn do_fetch_remote_config() {{
-    std::thread::spawn(|| {{
-        let url = format!("{{}}/config", REMOTE_CONFIG_SERVER);
-        let client = match reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(8))
-            .build()
-        {{
-            Ok(c) => c,
-            Err(e) => {{
-                log::error!("fetch_remote_config build client: {{e}}");
-                return;
-            }}
-        }};
-        let resp = match client
-            .get(&url)
-            .header("Authorization", format!("Bearer {{}}", REMOTE_CONFIG_TOKEN))
-            .send()
-        {{
-            Ok(r) => r,
-            Err(e) => {{
-                log::error!("fetch_remote_config request: {{e}}");
-                return;
-            }}
-        }};
-        let value: serde_json::Value = match resp.json() {{
-            Ok(v) => v,
-            Err(e) => {{
-                log::error!("fetch_remote_config parse: {{e}}");
-                return;
-            }}
-        }};
-        let set = |k: &str, opt: &str| {{
-            if let Some(s) = value.get(k).and_then(|v| v.as_str()) {{
-                if !s.is_empty() {{
-                    hbb_common::config::Config::set_option(opt.to_owned(), s.to_owned());
-                }}
-            }}
-        }};
-        set("host", "custom-rendezvous-server");
-        set("key", "key");
-        set("api", "api-server");
-        log::info!("remote config applied from {{}}", REMOTE_CONFIG_SERVER);
-    }});
+    let url = format!("{{}}/config", REMOTE_CONFIG_SERVER);
+    let client = match reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(6))
+        .build()
+    {{
+        Ok(c) => c,
+        Err(e) => {{
+            log::error!("fetch_remote_config build client: {{e}}");
+            return;
+        }}
+    }};
+    let resp = match client
+        .get(&url)
+        .header("Authorization", format!("Bearer {{}}", REMOTE_CONFIG_TOKEN))
+        .send()
+    {{
+        Ok(r) => r,
+        Err(e) => {{
+            log::error!("fetch_remote_config request: {{e}}");
+            return;
+        }}
+    }};
+    let value: serde_json::Value = match resp.json() {{
+        Ok(v) => v,
+        Err(e) => {{
+            log::error!("fetch_remote_config parse: {{e}}");
+            return;
+        }}
+    }};
+    if let Some(s) = value.get("host").and_then(|v| v.as_str()) {{
+        if !s.is_empty() {{
+            *hbb_common::config::PROD_RENDEZVOUS_SERVER.write().unwrap() = s.to_owned();
+        }}
+    }}
+    if let Some(s) = value.get("key").and_then(|v| v.as_str()) {{
+        if !s.is_empty() {{
+            *REMOTE_CFG_KEY.write().unwrap() = s.to_owned();
+        }}
+    }}
+    if let Some(s) = value.get("api").and_then(|v| v.as_str()) {{
+        if !s.is_empty() {{
+            *REMOTE_CFG_API.write().unwrap() = s.to_owned();
+        }}
+    }}
+    log::info!("remote config applied (hidden) from {{}}", REMOTE_CONFIG_SERVER);
 }}
 '''
         changed_any = True
