@@ -142,3 +142,23 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = None
 # --- 本地增强：中文 i18n 覆盖层（合并上游后如被覆盖，重新追加此块即可） ---
 # 通过中间件在 HTML 响应中注入前端翻译脚本，不改动任何模板/表单/视图。
 MIDDLEWARE = list(MIDDLEWARE) + ['rdgenerator.i18n_middleware.I18nInjectMiddleware']
+
+# --- 排查用：让未捕获异常(HTTP 500)的完整 traceback 打到容器日志(stderr) ---
+# Django 默认 DEBUG=False 时不会把 500 堆栈打到控制台，导致 docker logs 里看不到真正原因。
+# 下面让 django.request 的 ERROR 级别(含 500 堆栈)输出到 console；不影响正常业务。
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'loggers': {
+        'django.request': {
+            'handlers': ['console'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
+    },
+}
