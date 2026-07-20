@@ -1,12 +1,11 @@
-name: update docker image
+name: update docker image (DockerHub, manual)
 
+# 已改为 GHCR 发布（见 docker-publish.yml）。
+# 这里改成仅手动触发，避免每次 push 因缺少 DockerHub 密钥而自动失败。
+# 如果仍想用 DockerHub：配置 vars.DOCKERHUB_USERNAME 和 secrets.DOCKERHUB_TOKEN 后，
+# 在 Actions 页手动运行本工作流即可。
 on:
-  push:
-    branches:
-      - dev
-      - master
-    tags:
-      - 'v*.*.*'
+  workflow_dispatch:
 
 jobs:
   build:

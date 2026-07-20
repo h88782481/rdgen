@@ -1,8 +1,9 @@
 services:
   rdgen:
-    # use bryangerlach/rdgen:latest for the latest build
+    # 使用你自己在 GHCR 构建的镜像（由 .github/workflows/docker-publish.yml 发布）
+    # 把 h88782481 换成你的 GitHub 用户名/组织；如需本地构建改用下面的 build: .
+    image: ghcr.io/h88782481/rdgen:latest
     #build: .
-    image: bryangerlach/rdgen:latest
     restart: unless-stopped
     environment:
       SECRET_KEY: "django-insecure-!(t-!f#6g#sr%yfded9(xha)g+=!6craeez^cp+*&bz_7vdk61"
