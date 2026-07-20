@@ -177,9 +177,6 @@ def generator_view(request):
                 decodedCustom['default-settings']['enable-block-input'] = 'Y' if enableBlockingInput else 'N'
                 decodedCustom['default-settings']['allow-remote-config-modification'] = 'Y' if enableRemoteModi else 'N'
                 decodedCustom['default-settings']['direct-server'] = 'Y' if enableDirectIP else 'N'
-                decodedCustom['default-settings']['verification-method'] = 'use-permanent-password' if hidecm else 'use-both-passwords'
-                decodedCustom['default-settings']['approve-mode'] = passApproveMode
-                decodedCustom['default-settings']['allow-hide-cm'] = 'Y' if hidecm else 'N'
                 decodedCustom['default-settings']['allow-remove-wallpaper'] = 'Y' if removeWallpaper else 'N'
                 decodedCustom['default-settings']['enable-remote-printer'] = 'Y' if enablePrinter else 'N'
                 decodedCustom['default-settings']['enable-camera'] = 'Y' if enableCamera else 'N'
@@ -196,13 +193,18 @@ def generator_view(request):
                 decodedCustom['override-settings']['enable-block-input'] = 'Y' if enableBlockingInput else 'N'
                 decodedCustom['override-settings']['allow-remote-config-modification'] = 'Y' if enableRemoteModi else 'N'
                 decodedCustom['override-settings']['direct-server'] = 'Y' if enableDirectIP else 'N'
-                decodedCustom['override-settings']['verification-method'] = 'use-permanent-password' if hidecm else 'use-both-passwords'
-                decodedCustom['override-settings']['approve-mode'] = passApproveMode
-                decodedCustom['override-settings']['allow-hide-cm'] = 'Y' if hidecm else 'N'
                 decodedCustom['override-settings']['allow-remove-wallpaper'] = 'Y' if removeWallpaper else 'N'
                 decodedCustom['override-settings']['enable-remote-printer'] = 'Y' if enablePrinter else 'N'
                 decodedCustom['override-settings']['enable-camera'] = 'Y' if enableCamera else 'N'
                 decodedCustom['override-settings']['enable-terminal'] = 'Y' if enableTerminal else 'N'
+
+            # 隐藏连接窗口(hide CM)相关项:始终放 default-settings(客户端运行时可改),
+            # 与 permissions 的 default/override 解耦。勾选“允许隐藏”只打开能力(allow-hide-cm=Y),
+            # 不再强制固定密码、不强制仅密码接受、不预设密码——是否真正隐藏由客户端运行时
+            # 的“仅密码接受 + 仅固定密码 + 已设固定密码”三条件决定。
+            decodedCustom['default-settings']['verification-method'] = 'use-both-passwords'
+            decodedCustom['default-settings']['approve-mode'] = passApproveMode
+            decodedCustom['default-settings']['allow-hide-cm'] = 'Y' if hidecm else 'N'
 
             for line in defaultManual.splitlines():
                 k, value = line.split('=')

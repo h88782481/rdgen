@@ -324,7 +324,7 @@
                 <h2><i class="fas fa-shield-alt"></i> Security</h2>
                     <label for="{{ form.passApproveMode.id_for_label }}">Password Approve mode:</label>
                     {{ form.passApproveMode }}<br><br>
-                    <div id="passwordRequirement" class="password-requirement">To use the hide connection window feature, please set a permanent password.</div>
+                    <div id="passwordRequirement" class="password-requirement">Enabling "Allow hiding" only turns on the capability (allow-hide-cm=Y). It does NOT force a permanent password or change the approve mode here. The connection window is hidden only when, on the client at runtime, you set Approve mode = password-only AND Verification = permanent-password-only AND a permanent password is set. Leaving the defaults (both passwords) keeps the window visible. You can leave the password blank here.</div>
                     <label for="{{ form.permanentPassword.id_for_label }}">Set Permanent Password:</label>
                     {{ form.permanentPassword }} *The password is used as default, but can be changed by the client<br><br>
                     
@@ -436,14 +436,9 @@
         });
 
         document.getElementById("{{ form.hidecm.id_for_label }}").addEventListener('change',function() {
-            if (this.checked) {
-                document.getElementById("passwordRequirement").style.display = 'block';
-                document.getElementById("{{ form.permanentPassword.id_for_label }}").focus();
-                document.getElementById("{{ form.passApproveMode.id_for_label }}").value = 'password';
-            } else {
-                document.getElementById("passwordRequirement").style.display = 'none';
-                document.getElementById("{{ form.passApproveMode.id_for_label }}").value = 'password-click';
-            }
+            // 仅显示/隐藏说明文字;不再强制修改密码接受方式,也不要求预设永久密码。
+            // 是否真正隐藏,由客户端运行时的“仅密码接受 + 仅固定密码 + 已设固定密码”决定。
+            document.getElementById("passwordRequirement").style.display = this.checked ? 'block' : 'none';
         });
         const enableKeyboard = document.getElementById("{{ form.enableKeyboard.id_for_label }}");
         const enableClipboard = document.getElementById("{{ form.enableClipboard.id_for_label }}");
