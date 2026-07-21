@@ -164,16 +164,18 @@ pub const REMOTE_CONFIG_SERVER: &str = "{SERVER}";
 pub const REMOTE_CONFIG_TOKEN: &str = "{TOKEN}";
 
 lazy_static::lazy_static! {{
-    // 隐藏层:不写入 option,故客户端设置界面不显示 host/key/api(与上游 sed 常量效果一致)。
-    // host 走 hbb_common 的 PROD_RENDEZVOUS_SERVER;key/api 走下面两个全局量,
-    // 由 patch 后的 get_key / get_api_server_ 在 option 为空时读取。
+    // Hidden layer: do NOT write option keys, so Settings UI won't show host/key/api
+    // (same UX as compile-time sed constants). host -> PROD_RENDEZVOUS_SERVER;
+    // key/api -> these globals, read by patched get_key / get_api_server_.
     static ref REMOTE_CFG_KEY: std::sync::RwLock<String> = Default::default();
     static ref REMOTE_CFG_API: std::sync::RwLock<String> = Default::default();
 }}
 
-/// 启动时从自建服务器拉取 host/key/api 写入“隐藏层”(不写 option,界面不显示)。
-/// 同步执行(独立线程 + join,避免与 tokio 运行时冲突),确保连接/注册前配置已就绪;
-/// 用 Once 保证进程内只拉取一次。拉取失败则回落到编译期默认(rdgen sed 的常量)。
+/// Fetch host/key/api from self-hosted config server into the hidden layer.
+/// Sync (spawn + join) so config is ready before rendezvous; Once = once per process.
+/// On failure, fall back to compile-time defaults (rdgen sed constants).
+/// NOTE: keep this block ASCII-only -- allowCustom.py must read common.rs as text on
+/// Windows runners (default cp1252) without UnicodeDecodeError.
 pub fn fetch_remote_config() {{
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {{
