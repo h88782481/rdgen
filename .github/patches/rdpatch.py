@@ -3,14 +3,18 @@
 rdpatch.py — 给 RustDesk 客户端源码打入「远程配置中心 + 自定义更新服务器」补丁。
 
 在 rdgen 的 GitHub Actions 里,checkout 好 rustdesk 源码后运行本脚本。
-它通过正则做定点替换(对 1.4.x 各版本较稳健),完成:
+定点正则替换,适配官方客户端 **1.4.0–1.4.9**(含 nightly)。
 
   P1  版本检查 URL      -> 指向自建服务器 /version/latest        (hbb_common/src/lib.rs)
   P2  版本检查带 token   -> Authorization: Bearer <token>          (src/common.rs)
   P3  解析 version 字段  -> 用 serde_json::Value 读 url + version   (src/common.rs)
-  P4  直连下载          -> 直接用服务器返回的下载链接,不再拼 GitHub  (src/updater.rs)
-  P5  启动拉取配置       -> 注入 fetch_remote_config()             (src/common.rs)
-  P6  放开 custom 限制   -> 定制客户端也检查/提示更新                (common.rs + flutter)
+  P4  直连下载          -> 直接用服务器返回的下载链接,不再拼 GitHub
+      P4b Flutter 桌面; P4c Linux/便携; P4d Android; P4e Sciter
+  P5  启动拉取配置       -> fetch_remote_config(): global_init;
+      Android/iOS 另在 start_server 入口拉一次(开机服务不走 global_init)
+  P6  放开 custom 限制   -> 定制客户端也检查/提示更新
+  P7  隐藏层 host/key/api,且优先于 Windows exe license
+  P8  加密落盘 last-good -> LocalConfig `_rdc`; persist 时也会 fetch
 
 配置来自环境变量:
   RD_CONFIG_SERVER   自建服务器地址,例如 https://cfg.example.com  (必填)
@@ -84,9 +88,10 @@ patch_file("libs/hbb_common/src/lib.rs", "P1 version-check URL", p1, critical=Tr
 def common_rs(text):
     changed_any = False
 
-    # P2: 给两处 version 检查请求加 Authorization 头
+    # P2: version 检查请求加 Authorization。
+    # 1.4.0-1.4.3 一处 .post(url); 1.4.4+ 两处 .post(&url)(TLS retry)。
     text2, c = re.subn(
-        r'\.post\(&url\)\.json\(&request\)',
+        r'\.post\(&?url\)\s*\.json\(&request\)',
         '.post(&url).header("Authorization", format!("Bearer {}", REMOTE_CONFIG_TOKEN)).json(&request)',
         text,
     )
@@ -155,6 +160,137 @@ def common_rs(text):
     )
     changed_any = changed_any or c
 
+    # P7c: remote host 优先于 Windows exe 文件名里的 license host=
+    text, c = sub_once(
+        r'pub fn get_custom_rendezvous_server\(custom: String\) -> String \{\n'
+        r'    #\[cfg\(windows\)\]\n'
+        r'    if let Ok\(lic\) = crate::platform::windows::get_license_from_exe_name\(\) \{\n'
+        r'        if !lic\.host\.is_empty\(\) \{\n'
+        r'            return lic\.host\.clone\(\);\n'
+        r'        \}\n'
+        r'    \}\n'
+        r'    if !custom\.is_empty\(\) \{\n'
+        r'        return custom;\n'
+        r'    \}\n'
+        r'    if !config::PROD_RENDEZVOUS_SERVER\.read\(\)\.unwrap\(\)\.is_empty\(\) \{\n'
+        r'        return config::PROD_RENDEZVOUS_SERVER\.read\(\)\.unwrap\(\)\.clone\(\);\n'
+        r'    \}\n'
+        r'    ""\.to_owned\(\)\n'
+        r'\}',
+        "pub fn get_custom_rendezvous_server(custom: String) -> String {\n"
+        "    if !custom.is_empty() {\n"
+        "        return custom;\n"
+        "    }\n"
+        "    if !config::PROD_RENDEZVOUS_SERVER.read().unwrap().is_empty() {\n"
+        "        return config::PROD_RENDEZVOUS_SERVER.read().unwrap().clone();\n"
+        "    }\n"
+        "    #[cfg(windows)]\n"
+        "    if let Ok(lic) = crate::platform::windows::get_license_from_exe_name() {\n"
+        "        if !lic.host.is_empty() {\n"
+        "            return lic.host.clone();\n"
+        "        }\n"
+        "    }\n"
+        "    \"\".to_owned()\n"
+        "}",
+        text,
+    )
+    changed_any = changed_any or c
+
+    # P7d: get_rendezvous_server 里 Windows license 不得盖掉已下发的 host
+    text, c = sub_once(
+        r'    #\[cfg\(windows\)\]\n'
+        r'    if let Ok\(lic\) = crate::platform::get_license_from_exe_name\(\) \{\n'
+        r'        if !lic\.host\.is_empty\(\) \{\n'
+        r'            a = lic\.host;\n'
+        r'        \}\n'
+        r'    \}',
+        "    #[cfg(windows)]\n"
+        "    {\n"
+        "        let prod = config::PROD_RENDEZVOUS_SERVER.read().unwrap().clone();\n"
+        "        if !prod.is_empty() {\n"
+        "            a = prod;\n"
+        "        } else if let Ok(lic) = crate::platform::get_license_from_exe_name() {\n"
+        "            if !lic.host.is_empty() {\n"
+        "                a = lic.host;\n"
+        "            }\n"
+        "        }\n"
+        "    }",
+        text,
+    )
+    changed_any = changed_any or c
+
+    # P7e: get_key 下发 key 优先于 Windows license / option
+    text, c = sub_once(
+        r'pub async fn get_key\(sync: bool\) -> String \{\n'
+        r'    #\[cfg\(windows\)\]\n'
+        r'    if let Ok\(lic\) = crate::platform::windows::get_license_from_exe_name\(\) \{\n'
+        r'        if !lic\.key\.is_empty\(\) \{\n'
+        r'            return lic\.key;\n'
+        r'        \}\n'
+        r'    \}',
+        "pub async fn get_key(sync: bool) -> String {\n"
+        "    {\n"
+        "        let k = REMOTE_CFG_KEY.read().unwrap().clone();\n"
+        "        if !k.is_empty() {\n"
+        "            return k;\n"
+        "        }\n"
+        "    }\n"
+        "    #[cfg(windows)]\n"
+        "    if let Ok(lic) = crate::platform::windows::get_license_from_exe_name() {\n"
+        "        if !lic.key.is_empty() {\n"
+        "            return lic.key;\n"
+        "        }\n"
+        "    }",
+        text,
+    )
+    changed_any = changed_any or c
+
+    # P7f: get_api_server_ 下发 api 优先于 Windows license
+    text, c = sub_once(
+        r'fn get_api_server_\(api: String, custom: String\) -> String \{\n'
+        r'    #\[cfg\(windows\)\]\n'
+        r'    if let Ok\(lic\) = crate::platform::windows::get_license_from_exe_name\(\) \{\n'
+        r'        if !lic\.api\.is_empty\(\) \{\n'
+        r'            return lic\.api\.clone\(\);\n'
+        r'        \}\n'
+        r'    \}',
+        "fn get_api_server_(api: String, custom: String) -> String {\n"
+        "    {\n"
+        "        let a = REMOTE_CFG_API.read().unwrap().clone();\n"
+        "        if !a.is_empty() {\n"
+        "            return a;\n"
+        "        }\n"
+        "    }\n"
+        "    #[cfg(windows)]\n"
+        "    if let Ok(lic) = crate::platform::windows::get_license_from_exe_name() {\n"
+        "        if !lic.api.is_empty() {\n"
+        "            return lic.api.clone();\n"
+        "        }\n"
+        "    }",
+        text,
+    )
+    changed_any = changed_any or c
+
+    # P8: load_custom_client 结束后把 last-good 写到正确的 APP_NAME 配置目录
+    text, c = sub_once(
+        r'        read_custom_client\(data\.trim\(\)\);\n        return;',
+        "        read_custom_client(data.trim());\n"
+        "        persist_remote_config_after_custom_client();\n"
+        "        return;",
+        text,
+    )
+    changed_any = changed_any or c
+
+    text, c = sub_once(
+        r'        read_custom_client\(&data\.trim\(\)\);\n    \}\n\}',
+        "        read_custom_client(&data.trim());\n"
+        "    }\n"
+        "    persist_remote_config_after_custom_client();\n"
+        "}",
+        text,
+    )
+    changed_any = changed_any or c
+
     # 注入常量 + fetch_remote_config()(追加到文件末尾)
     if "REMOTE_CONFIG_SERVER" not in text:
         text += f'''
@@ -162,6 +298,8 @@ def common_rs(text):
 // ==== injected by rdpatch.py: remote config center ====
 pub const REMOTE_CONFIG_SERVER: &str = "{SERVER}";
 pub const REMOTE_CONFIG_TOKEN: &str = "{TOKEN}";
+
+const REMOTE_CFG_CACHE_KEY: &str = "_rdc";
 
 lazy_static::lazy_static! {{
     // Hidden layer: do NOT write option keys, so Settings UI won't show host/key/api
@@ -171,9 +309,13 @@ lazy_static::lazy_static! {{
     static ref REMOTE_CFG_API: std::sync::RwLock<String> = Default::default();
 }}
 
+static REMOTE_CFG_FETCH_OK: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// Fetch host/key/api from self-hosted config server into the hidden layer.
 /// Sync (spawn + join) so config is ready before rendezvous; Once = once per process.
-/// On failure, fall back to compile-time defaults (rdgen sed constants).
+/// HTTP first: on success apply + encrypt cache. On failure decrypt last-good.
+/// If neither, fall back to compile-time rdgen sed constants.
 /// NOTE: keep this block ASCII-only -- allowCustom.py must read common.rs as text on
 /// Windows runners (default cp1252) without UnicodeDecodeError.
 pub fn fetch_remote_config() {{
@@ -186,7 +328,103 @@ pub fn fetch_remote_config() {{
     }});
 }}
 
-fn do_fetch_remote_config() {{
+fn remote_cfg_mix(data: &[u8]) -> Vec<u8> {{
+    let t = REMOTE_CONFIG_TOKEN.as_bytes();
+    if t.is_empty() {{
+        return data.to_vec();
+    }}
+    data.iter()
+        .enumerate()
+        .map(|(i, b)| b ^ t[i % t.len()])
+        .collect()
+}}
+
+fn enc_remote_cfg_blob(plain: &str) -> String {{
+    let mixed = remote_cfg_mix(plain.as_bytes());
+    let enc = hbb_common::password_security::encrypt_vec_or_original(&mixed, "00", 4096);
+    String::from_utf8_lossy(&enc).to_string()
+}}
+
+fn dec_remote_cfg_blob(s: &str) -> String {{
+    let (mixed, ok, _) =
+        hbb_common::password_security::decrypt_vec_or_original(s.as_bytes(), "00");
+    if !ok {{
+        return String::new();
+    }}
+    String::from_utf8_lossy(&remote_cfg_mix(&mixed)).to_string()
+}}
+
+fn apply_hidden_remote_cfg(host: &str, key: &str, api: &str) {{
+    if !host.is_empty() {{
+        *hbb_common::config::PROD_RENDEZVOUS_SERVER.write().unwrap() = host.to_owned();
+    }}
+    if !key.is_empty() {{
+        *REMOTE_CFG_KEY.write().unwrap() = key.to_owned();
+    }}
+    if !api.is_empty() {{
+        *REMOTE_CFG_API.write().unwrap() = api.to_owned();
+    }}
+}}
+
+fn load_cached_remote_config() -> bool {{
+    let enc = hbb_common::config::LocalConfig::get_option(REMOTE_CFG_CACHE_KEY);
+    if enc.is_empty() {{
+        return false;
+    }}
+    let plain = dec_remote_cfg_blob(&enc);
+    if plain.is_empty() {{
+        log::warn!("remote config cache decrypt failed");
+        return false;
+    }}
+    let value: serde_json::Value = match serde_json::from_str(&plain) {{
+        Ok(v) => v,
+        Err(e) => {{
+            log::warn!("remote config cache parse: {{e}}");
+            return false;
+        }}
+    }};
+    let host = value.get("h").and_then(|v| v.as_str()).unwrap_or("");
+    let key = value.get("k").and_then(|v| v.as_str()).unwrap_or("");
+    let api = value.get("a").and_then(|v| v.as_str()).unwrap_or("");
+    if host.is_empty() && key.is_empty() && api.is_empty() {{
+        return false;
+    }}
+    apply_hidden_remote_cfg(host, key, api);
+    log::info!("remote config applied from encrypted local cache");
+    true
+}}
+
+fn save_cached_remote_config() {{
+    let host = hbb_common::config::PROD_RENDEZVOUS_SERVER
+        .read()
+        .unwrap()
+        .clone();
+    let key = REMOTE_CFG_KEY.read().unwrap().clone();
+    let api = REMOTE_CFG_API.read().unwrap().clone();
+    if host.is_empty() && key.is_empty() && api.is_empty() {{
+        return;
+    }}
+    let plain = serde_json::json!({{"h": host, "k": key, "a": api}}).to_string();
+    let enc = enc_remote_cfg_blob(&plain);
+    if enc.is_empty() {{
+        log::error!("remote config cache encrypt failed");
+        return;
+    }}
+    hbb_common::config::LocalConfig::set_option(REMOTE_CFG_CACHE_KEY.to_owned(), enc);
+}}
+
+fn persist_remote_config_after_custom_client() {{
+    // Android 1.4.4+ Flutter initialize: load_custom_client runs BEFORE
+    // global_init / test_rendezvous. Fetch here so host/key/api are ready.
+    fetch_remote_config();
+    if REMOTE_CFG_FETCH_OK.load(std::sync::atomic::Ordering::SeqCst) {{
+        save_cached_remote_config();
+    }} else {{
+        let _ = load_cached_remote_config();
+    }}
+}}
+
+fn try_fetch_remote_config() -> bool {{
     let url = format!("{{}}/config", REMOTE_CONFIG_SERVER);
     let client = match reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(6))
@@ -195,7 +433,7 @@ fn do_fetch_remote_config() {{
         Ok(c) => c,
         Err(e) => {{
             log::error!("fetch_remote_config build client: {{e}}");
-            return;
+            return false;
         }}
     }};
     let resp = match client
@@ -206,32 +444,42 @@ fn do_fetch_remote_config() {{
         Ok(r) => r,
         Err(e) => {{
             log::error!("fetch_remote_config request: {{e}}");
-            return;
+            return false;
         }}
     }};
+    if !resp.status().is_success() {{
+        log::error!("fetch_remote_config http {{}}", resp.status());
+        return false;
+    }}
     let value: serde_json::Value = match resp.json() {{
         Ok(v) => v,
         Err(e) => {{
             log::error!("fetch_remote_config parse: {{e}}");
-            return;
+            return false;
         }}
     }};
-    if let Some(s) = value.get("host").and_then(|v| v.as_str()) {{
-        if !s.is_empty() {{
-            *hbb_common::config::PROD_RENDEZVOUS_SERVER.write().unwrap() = s.to_owned();
-        }}
+    let host = value.get("host").and_then(|v| v.as_str()).unwrap_or("");
+    let key = value.get("key").and_then(|v| v.as_str()).unwrap_or("");
+    let api = value.get("api").and_then(|v| v.as_str()).unwrap_or("");
+    if host.is_empty() && key.is_empty() && api.is_empty() {{
+        log::warn!("fetch_remote_config empty payload");
+        return false;
     }}
-    if let Some(s) = value.get("key").and_then(|v| v.as_str()) {{
-        if !s.is_empty() {{
-            *REMOTE_CFG_KEY.write().unwrap() = s.to_owned();
-        }}
-    }}
-    if let Some(s) = value.get("api").and_then(|v| v.as_str()) {{
-        if !s.is_empty() {{
-            *REMOTE_CFG_API.write().unwrap() = s.to_owned();
-        }}
-    }}
+    apply_hidden_remote_cfg(host, key, api);
+    REMOTE_CFG_FETCH_OK.store(true, std::sync::atomic::Ordering::SeqCst);
+    save_cached_remote_config();
     log::info!("remote config applied (hidden) from {{}}", REMOTE_CONFIG_SERVER);
+    true
+}}
+
+fn do_fetch_remote_config() {{
+    if try_fetch_remote_config() {{
+        return;
+    }}
+    if load_cached_remote_config() {{
+        return;
+    }}
+    log::warn!("remote config: http failed and no cache, using compile-time defaults");
 }}
 '''
         changed_any = True
@@ -294,7 +542,8 @@ patch_file("flutter/lib/common.dart", "P6b checkUpdate guard (flutter)", common_
 
 
 def desktop_home_dart(text):
-    return sub_once(
+    changed_any = False
+    text, c = sub_once(
         r'if \(!bind\.isCustomClient\(\) &&\s*\n'
         r'\s*updateUrl\.isNotEmpty &&\s*\n'
         r'\s*!isCardClosed &&\s*\n'
@@ -302,27 +551,104 @@ def desktop_home_dart(text):
         "if (updateUrl.isNotEmpty &&\n        !isCardClosed) {",
         text,
     )
+    changed_any = changed_any or c
+    # P4c: Linux / portable Download 按钮走 config-server 直链,不再打开 rustdesk.com
+    text, c = sub_once(
+        r"final Uri url = Uri\.parse\('https://rustdesk.com/download'\);",
+        "final Uri url = Uri.parse(updateUrl);",
+        text,
+    )
+    changed_any = changed_any or c
+    return text, changed_any
 
 
 patch_file(
     "flutter/lib/desktop/pages/desktop_home_page.dart",
-    "P6c update card guard (flutter)",
+    "P6c/P4c update card + direct url (flutter desktop)",
     desktop_home_dart,
+    critical=True,
 )
 
 
 def connection_page_dart(text):
-    return sub_once(
+    changed_any = False
+    text, c = sub_once(
         r'if \(!bind\.isCustomClient\(\) && !isIOS\)',
         "if (!isIOS)",
+        text,
+    )
+    changed_any = changed_any or c
+    # P4d: Android 更新条打开服务器返回的直链
+    text, c = sub_once(
+        r"final url = 'https://rustdesk.com/download';",
+        "final url = updateUrl;",
+        text,
+    )
+    changed_any = changed_any or c
+    return text, changed_any
+
+
+patch_file(
+    "flutter/lib/mobile/pages/connection_page.dart",
+    "P6d/P4d mobile update card + direct url",
+    connection_page_dart,
+    critical=True,
+)
+
+
+# --------------------------------------------------------------------------
+# P4e / P6e: Sciter (windows-x86) 直链 + 定制客户端也显示下载按钮
+# --------------------------------------------------------------------------
+def index_tis(text):
+    changed_any = False
+    text, c = sub_once(
+        r'handler\.open_url\("https://rustdesk.com/download"\);',
+        "handler.open_url(software_update_url);",
+        text,
+    )
+    changed_any = changed_any or c
+    # 1.4.6+ hides the click target for custom clients
+    text, c = sub_once(
+        r"\{is_custom_client\s*\n"
+        r"\s*\? <div style=.*?"
+        r"<div #install-me\.link>\{translate\('Click to ' \+ update_or_download\)\}</div>\}",
+        "<div #install-me.link>{translate('Click to ' + update_or_download)}</div>",
+        text,
+        flags=re.DOTALL,
+    )
+    changed_any = changed_any or c
+    return text, changed_any
+
+
+patch_file("src/ui/index.tis", "P4e/P6e Sciter direct download url", index_tis)
+
+
+# --------------------------------------------------------------------------
+# P5: Android/iOS start_server 入口拉配置。开机 MainService 只走这里,不经过
+# global_init / Flutter initialize。桌面 start_server 签名不同,不会误打。
+# --------------------------------------------------------------------------
+def server_rs(text):
+    return sub_once(
+        r'#\[cfg\(any\(target_os = "android", target_os = "ios"\)\)\]\n'
+        r'#\[tokio::main\]\n'
+        r'pub async fn start_server\(_is_server: bool\) \{\n'
+        r'    crate::RendezvousMediator::start_all\(\)\.await;\n'
+        r'\}',
+        '#[cfg(any(target_os = "android", target_os = "ios"))]\n'
+        "#[tokio::main]\n"
+        "pub async fn start_server(_is_server: bool) {\n"
+        "    crate::common::fetch_remote_config();\n"
+        "    crate::RendezvousMediator::start_all().await;\n"
+        "}",
         text,
     )
 
 
 patch_file(
-    "flutter/lib/mobile/pages/connection_page.dart",
-    "P6d mobile update card guard (flutter)",
-    connection_page_dart,
+    "src/server.rs",
+    "P5 Android/iOS start_server fetch",
+    server_rs,
+    critical=True,
 )
 
 
