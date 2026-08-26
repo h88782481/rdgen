@@ -163,6 +163,7 @@ def generate_custom_client(params, full_url):
     decodedCustom['enable-lan-discovery'] = 'N' if denyLan else 'Y'
     #decodedCustom['direct-server'] = 'Y' if enableDirectIP else 'N'
     decodedCustom['allow-auto-disconnect'] = 'Y' if autoClose else 'N'
+
     if permissionsDorO == "default":
         decodedCustom['default-settings']['access-mode'] = permissionsType
         decodedCustom['default-settings']['enable-keyboard'] = 'Y' if enableKeyboard else 'N'
@@ -179,6 +180,10 @@ def generate_custom_client(params, full_url):
         decodedCustom['default-settings']['enable-remote-printer'] = 'Y' if enablePrinter else 'N'
         decodedCustom['default-settings']['enable-camera'] = 'Y' if enableCamera else 'N'
         decodedCustom['default-settings']['enable-terminal'] = 'Y' if enableTerminal else 'N'
+        decodedCustom['default-settings']['custom-rendezvous-server'] = server
+        decodedCustom['default-settings']['api-server'] = apiServer
+        
+
     else:
         decodedCustom['override-settings']['access-mode'] = permissionsType
         decodedCustom['override-settings']['enable-keyboard'] = 'Y' if enableKeyboard else 'N'
@@ -195,6 +200,9 @@ def generate_custom_client(params, full_url):
         decodedCustom['override-settings']['enable-remote-printer'] = 'Y' if enablePrinter else 'N'
         decodedCustom['override-settings']['enable-camera'] = 'Y' if enableCamera else 'N'
         decodedCustom['override-settings']['enable-terminal'] = 'Y' if enableTerminal else 'N'
+        if direction == 'incoming':
+            decodedCustom['override-settings']['custom-rendezvous-server'] = server
+            decodedCustom['override-settings']['api-server'] = apiServer
 
     # 隐藏连接窗口(hide CM)相关项:始终放 default-settings(客户端运行时可改),
     # 与 permissions 的 default/override 解耦。勾选“允许隐藏”只打开能力(allow-hide-cm=Y),
