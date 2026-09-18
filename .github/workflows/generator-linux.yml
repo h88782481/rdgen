@@ -29,7 +29,7 @@ env:
   TAG_NAME: "${{ inputs.upload-tag }}"
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
   # vcpkg version: 2024.07.12
-  VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
+  VCPKG_COMMIT_ID: "${{ inputs.version == 'master' && '9e593bb18ea69cc5095e012465dcd675a822ed0d' || '120deac3062162151622ca4860575a33844ba10b' }}"
   ARMV7_VCPKG_COMMIT_ID: "6f29f12e82a8293156836ad81cc9bf5af41fe836"
   VERSION: "${{ inputs.version }}"
   NDK_VERSION: "r28c"
@@ -268,6 +268,55 @@ jobs:
           sed -i -e 's|Purslane Ltd.|${{ env.compname }}|' ./src/ui/index.tis
           sed -i -e 's|Purslane Ltd|${{ env.compname }}|' ./src/main.rs
           
+      - name: set server, serverPort, key, and apiserver
+        continue-on-error: true
+        shell: bash
+        env:
+          SERVER_DOMAIN: ${{ env.server }}
+          SERVER_PORT_INPUT: ${{ env.serverPort }}
+          SERVER_KEY: ${{ env.key }}
+          API_SERVER: ${{ env.apiServer }}
+        run: |
+          # Pass secrets via bash env vars to avoid quoting issues
+          if [ ! -f "./libs/hbb_common/src/config.rs" ]; then
+            echo "Error: config.rs not found!"
+            exit 1
+          fi
+          if [ ! -f "./src/common.rs" ]; then
+            echo "Error: common.rs not found!"
+            exit 1
+          fi
+
+          # Port must be a number; views.py defaults it to 21116
+          if ! [[ "$SERVER_PORT_INPUT" =~ ^[0-9]+$ ]]; then
+            echo "Error: serverPort must be a number, got: '$SERVER_PORT_INPUT'"
+            exit 1
+          fi
+
+          # Derive the port block from the rendezvous port
+          # (defaults 21116/21117/21118/21119)
+          SERVER_PORT=$SERVER_PORT_INPUT
+          RELAY_PORT=$((SERVER_PORT + 1))
+          WS_RENDEZVOUS_PORT=$((RELAY_PORT + 1))
+          WS_RELAY_PORT=$((WS_RENDEZVOUS_PORT + 1))
+
+          echo "Setting server: $SERVER_DOMAIN"
+          echo "Setting ports: $SERVER_PORT, $RELAY_PORT, $WS_RENDEZVOUS_PORT, $WS_RELAY_PORT"
+
+          sed -i -e "s|rs-ny.rustdesk.com|$SERVER_DOMAIN|" ./libs/hbb_common/src/config.rs
+
+          # Match on numeric value so the step is independent of defaults
+          sed -i -e "s|pub const RENDEZVOUS_PORT: i32 = [0-9][0-9]*;|pub const RENDEZVOUS_PORT: i32 = $SERVER_PORT;|" ./libs/hbb_common/src/config.rs
+          sed -i -e "s|pub const RELAY_PORT: i32 = [0-9][0-9]*;|pub const RELAY_PORT: i32 = $RELAY_PORT;|" ./libs/hbb_common/src/config.rs
+          sed -i -e "s|pub const WS_RENDEZVOUS_PORT: i32 = [0-9][0-9]*;|pub const WS_RENDEZVOUS_PORT: i32 = $WS_RENDEZVOUS_PORT;|" ./libs/hbb_common/src/config.rs
+          sed -i -e "s|pub const WS_RELAY_PORT: i32 = [0-9][0-9]*;|pub const WS_RELAY_PORT: i32 = $WS_RELAY_PORT;|" ./libs/hbb_common/src/config.rs
+
+          sed -i -e "s|OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw=|$SERVER_KEY|" ./libs/hbb_common/src/config.rs
+          sed -i -e "s|https://admin.rustdesk.com|$API_SERVER|" ./src/common.rs
+
+          echo "=== Verification ==="
+          grep -nE "RENDEZVOUS_PORT|RELAY_PORT|WS_" ./libs/hbb_common/src/config.rs
+
       - name: allow custom.txt
         uses: nick-fields/retry@v3
         with:
@@ -276,14 +325,11 @@ jobs:
           retry_wait_seconds: 15
           shell: bash
           command: |
-            sed -i -e 's|rs-ny.rustdesk.com|${{ env.server }}|' ./libs/hbb_common/src/config.rs
-            sed -i -e 's|OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw=|${{ env.key }}|' ./libs/hbb_common/src/config.rs
             wget https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/allowCustom.py
             python allowCustom.py
             wget https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/removeSetupServerTip.diff
             git apply removeSetupServerTip.diff
             # sed -i '/intl:/a \ \ archive: ^3.6.1' ./flutter/pubspec.yaml
-            sed -i -e 's|https://admin.rustdesk.com|${{ env.apiServer }}|' ./src/common.rs
             echo -n '${{ env.custom }}' > ./custom_.txt
           
       - name: change url to custom
@@ -313,7 +359,11 @@ jobs:
         if: ${{ env.delayFix == 'true' }}
         shell: bash
         run: |
-          sed -i -e 's|!key.is_empty()|false|' ./src/client.rs
+          # Precise fix: only extend the direct-connection condition with the
+          # key check, instead of globally replacing !key.is_empty() with
+          # false (which would also disable TCP encryption and UDP logic).
+          sed -i -e 's#if is_local || peer_nat_type == NatType::SYMMETRIC {#if is_local || peer_nat_type == NatType::SYMMETRIC || !key.is_empty() {#' ./src/client.rs
+          grep -n "key.is_empty()" ./src/client.rs || true
 
       - name: use X for offline display instead of orange circle
         if: env.xOffline == 'true'
@@ -534,6 +584,25 @@ jobs:
                 sed -ie "s|\(cp .* \)tmpdeb/usr/share/rustdesk/files/systemd/|\1tmpdeb/usr/share/rustdesk/files/systemd/${{ env.appname }}.service|g" build.py
                 sed -ie "s|cp -r \(.\+\)\* \([^ ]\+\)/rustdesk|mv \1rustdesk \1${{ env.appname }}; cp -r \1\* \2/${{ env.appname }}|g" build.py
                 sed -ie "s|\(tmpdeb/[^ ]*\)rustdesk|\1${{ env.appname }}|g" build.py
+                # The rename above is greedy in \1, so it rewrites only the LAST
+                # "rustdesk" of each path and leaves build.py's globs pointing where the
+                # staging tree never exists. Three corrections, all confined to the drm
+                # code paths (assert_staged_binary_is_drm, measured_glibc_floor); the
+                # stock packaging path never executes those lines.
+                #
+                # 1. Directory component: the cp -r rename above stages into
+                #    tmpdeb/usr/share/<appname>/, but the globs kept usr/share/rustdesk/.
+                sed -ie "s|tmpdeb/usr/share/rustdesk/|tmpdeb/usr/share/${{ env.appname }}/|g" build.py
+                # 2. Library filename: build.py renames only the executable and copies the
+                #    bundle verbatim, so the cdylib stays librustdesk.so. The greedy sed
+                #    renamed it to lib<appname>.so, and that is the file carrying the drm
+                #    marker -- the thin Flutter launcher does not.
+                sed -ie "s|lib/lib${{ env.appname }}\.so|lib/librustdesk.so|g" build.py
+                # 3. libdrmtap must NOT be renamed: drmtap_dl.rs dlopens the absolute path
+                #    /usr/lib/rustdesk/libdrmtap.so.0, compiled into the binary and
+                #    rewritten by nothing here. Staging it under /usr/lib/<appname>/
+                #    packages and installs cleanly, then never loads on the user's machine.
+                sed -ie "s|tmpdeb/usr/lib/${{ env.appname }}|tmpdeb/usr/lib/rustdesk|g" build.py
                 sed -ie "s|Package: rustdesk|Package: ${{ env.appname }}|g" build.py
                 sed -ie "s|RustDesk|${{ env.appname }}|g" res/rustdesk.desktop
                 FILES=$(sed -ne "s~.*cp\s\(../\)\?\+\(.\+\.\(desktop\|service\)\)\s\+tmpdeb/.*~\2~p" build.py | sort | uniq)
@@ -628,7 +697,7 @@ jobs:
         if: ${{ env.rdgen == 'true' }}
         uses: nick-fields/retry@v3
         with:
-          timeout_minutes: 5
+          timeout_minutes: 10
           max_attempts: 3
           retry_wait_seconds: 15
           shell: bash
@@ -642,7 +711,7 @@ jobs:
         if: ${{ env.rdgen == 'false' }}
         uses: nick-fields/retry@v3
         with:
-          timeout_minutes: 5
+          timeout_minutes: 10
           max_attempts: 3
           retry_wait_seconds: 15
           shell: bash
@@ -663,6 +732,16 @@ jobs:
     needs: [generate-bridge-linux, setup]
     name: build rustdesk linux drm x86_64
     runs-on: ubuntu-22.04
+    # Only rustdesk's master branch carries the drm/libdrmtap support this job
+    # drives: build.py at tag 1.4.9 has neither build_libdrmtap_so nor
+    # assert_staged_binary_is_drm, so a versioned build dies at
+    #   AttributeError: module 'b' has no attribute 'build_libdrmtap_so'
+    # One failed job marks the whole run failed, so a client that was in fact
+    # built got reported as a build failure. No other job consumes this one's
+    # artifacts (deploy needs only build-rustdesk-linux, build-flatpak and
+    # build-appimage). Gated the way bridge.yml already tells the two sources
+    # apart.
+    if: ${{ inputs.version == 'master' }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -720,6 +799,16 @@ jobs:
         with:
           repository: rustdesk/rustdesk
           submodules: recursive
+
+      - name: Detect DRM support
+        run: |
+          if grep -q "'--drm'" build.py; then
+            echo "DRM_SUPPORTED=true" >> $GITHUB_ENV
+            echo "::notice::DRM/KMS capture backend detected in this RustDesk version"
+          else
+            echo "DRM_SUPPORTED=false" >> $GITHUB_ENV
+            echo "::notice::DRM/KMS capture backend not present in this RustDesk version, skipping DRM build"
+          fi
 
       - name: Set Swap Space
         uses: pierotofy/set-swap-space@master
@@ -781,6 +870,7 @@ jobs:
         shell: bash
 
       - name: Build libdrmtap
+        if: env.DRM_SUPPORTED == 'true'
         run: |
           sudo apt-get install -y meson ninja-build pkg-config \
             libdrm-dev libegl1-mesa-dev libgles2-mesa-dev
@@ -790,7 +880,13 @@ jobs:
           b = importlib.util.module_from_spec(spec)
           sys.argv = ["build.py"]
           spec.loader.exec_module(b)
-          print(f"::notice::built {b.build_libdrmtap_so()}")
+          # build_libdrmtap_so() exists only in recent RustDesk sources
+          # (master); tagged 1.4.x releases don't have it - skip gracefully
+          # instead of failing the whole drm job.
+          if hasattr(b, 'build_libdrmtap_so'):
+              print(f"::notice::built {b.build_libdrmtap_so()}")
+          else:
+              print("::notice::build_libdrmtap_so not present in this RustDesk version, skipping")
           PY
         shell: bash
 
@@ -856,6 +952,55 @@ jobs:
           sed -i -e 's|Purslane Ltd.|${{ env.compname }}|' ./src/ui/index.tis
           sed -i -e 's|Purslane Ltd|${{ env.compname }}|' ./src/main.rs
           
+      - name: set server, serverPort, key, and apiserver
+        continue-on-error: true
+        shell: bash
+        env:
+          SERVER_DOMAIN: ${{ env.server }}
+          SERVER_PORT_INPUT: ${{ env.serverPort }}
+          SERVER_KEY: ${{ env.key }}
+          API_SERVER: ${{ env.apiServer }}
+        run: |
+          # Pass secrets via bash env vars to avoid quoting issues
+          if [ ! -f "./libs/hbb_common/src/config.rs" ]; then
+            echo "Error: config.rs not found!"
+            exit 1
+          fi
+          if [ ! -f "./src/common.rs" ]; then
+            echo "Error: common.rs not found!"
+            exit 1
+          fi
+
+          # Port must be a number; views.py defaults it to 21116
+          if ! [[ "$SERVER_PORT_INPUT" =~ ^[0-9]+$ ]]; then
+            echo "Error: serverPort must be a number, got: '$SERVER_PORT_INPUT'"
+            exit 1
+          fi
+
+          # Derive the port block from the rendezvous port
+          # (defaults 21116/21117/21118/21119)
+          SERVER_PORT=$SERVER_PORT_INPUT
+          RELAY_PORT=$((SERVER_PORT + 1))
+          WS_RENDEZVOUS_PORT=$((RELAY_PORT + 1))
+          WS_RELAY_PORT=$((WS_RENDEZVOUS_PORT + 1))
+
+          echo "Setting server: $SERVER_DOMAIN"
+          echo "Setting ports: $SERVER_PORT, $RELAY_PORT, $WS_RENDEZVOUS_PORT, $WS_RELAY_PORT"
+
+          sed -i -e "s|rs-ny.rustdesk.com|$SERVER_DOMAIN|" ./libs/hbb_common/src/config.rs
+
+          # Match on numeric value so the step is independent of defaults
+          sed -i -e "s|pub const RENDEZVOUS_PORT: i32 = [0-9][0-9]*;|pub const RENDEZVOUS_PORT: i32 = $SERVER_PORT;|" ./libs/hbb_common/src/config.rs
+          sed -i -e "s|pub const RELAY_PORT: i32 = [0-9][0-9]*;|pub const RELAY_PORT: i32 = $RELAY_PORT;|" ./libs/hbb_common/src/config.rs
+          sed -i -e "s|pub const WS_RENDEZVOUS_PORT: i32 = [0-9][0-9]*;|pub const WS_RENDEZVOUS_PORT: i32 = $WS_RENDEZVOUS_PORT;|" ./libs/hbb_common/src/config.rs
+          sed -i -e "s|pub const WS_RELAY_PORT: i32 = [0-9][0-9]*;|pub const WS_RELAY_PORT: i32 = $WS_RELAY_PORT;|" ./libs/hbb_common/src/config.rs
+
+          sed -i -e "s|OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw=|$SERVER_KEY|" ./libs/hbb_common/src/config.rs
+          sed -i -e "s|https://admin.rustdesk.com|$API_SERVER|" ./src/common.rs
+
+          echo "=== Verification ==="
+          grep -nE "RENDEZVOUS_PORT|RELAY_PORT|WS_" ./libs/hbb_common/src/config.rs
+
       - name: allow custom.txt
         uses: nick-fields/retry@v3
         with:
@@ -864,13 +1009,10 @@ jobs:
           retry_wait_seconds: 15
           shell: bash
           command: |
-            sed -i -e 's|rs-ny.rustdesk.com|${{ env.server }}|' ./libs/hbb_common/src/config.rs
-            sed -i -e 's|OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw=|${{ env.key }}|' ./libs/hbb_common/src/config.rs
             wget https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/allowCustom.py
             python allowCustom.py
             wget https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/removeSetupServerTip.diff
             git apply removeSetupServerTip.diff
-            sed -i -e 's|https://admin.rustdesk.com|${{ env.apiServer }}|' ./src/common.rs
             echo -n '${{ env.custom }}' > ./custom_.txt
           
       - name: change url to custom
@@ -900,7 +1042,11 @@ jobs:
         if: ${{ env.delayFix == 'true' }}
         shell: bash
         run: |
-          sed -i -e 's|!key.is_empty()|false|' ./src/client.rs
+          # Precise fix: only extend the direct-connection condition with the
+          # key check, instead of globally replacing !key.is_empty() with
+          # false (which would also disable TCP encryption and UDP logic).
+          sed -i -e 's#if is_local || peer_nat_type == NatType::SYMMETRIC {#if is_local || peer_nat_type == NatType::SYMMETRIC || !key.is_empty() {#' ./src/client.rs
+          grep -n "key.is_empty()" ./src/client.rs || true
 
       - name: use X for offline display instead of orange circle
         if: env.xOffline == 'true'
@@ -940,6 +1086,7 @@ jobs:
           path: ./
 
       - uses: rustdesk-org/run-on-arch-action@d3fcfbb632b84cf7f6bc772bfaaa2c2f4f8789a8
+        if: env.DRM_SUPPORTED == 'true'
         name: Build rustdesk
         id: vcpkg
         with:
@@ -1068,6 +1215,25 @@ jobs:
                 sed -ie "s|\(cp .* \)tmpdeb/usr/share/rustdesk/files/systemd/|\1tmpdeb/usr/share/rustdesk/files/systemd/${{ env.appname }}.service|g" build.py
                 sed -ie "s|cp -r \(.\+\)\* \([^ ]\+\)/rustdesk|mv \1rustdesk \1${{ env.appname }}; cp -r \1\* \2/${{ env.appname }}|g" build.py
                 sed -ie "s|\(tmpdeb/[^ ]*\)rustdesk|\1${{ env.appname }}|g" build.py
+                # The rename above is greedy in \1, so it rewrites only the LAST
+                # "rustdesk" of each path and leaves build.py's globs pointing where the
+                # staging tree never exists. Three corrections, all confined to the drm
+                # code paths (assert_staged_binary_is_drm, measured_glibc_floor); the
+                # stock packaging path never executes those lines.
+                #
+                # 1. Directory component: the cp -r rename above stages into
+                #    tmpdeb/usr/share/<appname>/, but the globs kept usr/share/rustdesk/.
+                sed -ie "s|tmpdeb/usr/share/rustdesk/|tmpdeb/usr/share/${{ env.appname }}/|g" build.py
+                # 2. Library filename: build.py renames only the executable and copies the
+                #    bundle verbatim, so the cdylib stays librustdesk.so. The greedy sed
+                #    renamed it to lib<appname>.so, and that is the file carrying the drm
+                #    marker -- the thin Flutter launcher does not.
+                sed -ie "s|lib/lib${{ env.appname }}\.so|lib/librustdesk.so|g" build.py
+                # 3. libdrmtap must NOT be renamed: drmtap_dl.rs dlopens the absolute path
+                #    /usr/lib/rustdesk/libdrmtap.so.0, compiled into the binary and
+                #    rewritten by nothing here. Staging it under /usr/lib/<appname>/
+                #    packages and installs cleanly, then never loads on the user's machine.
+                sed -ie "s|tmpdeb/usr/lib/${{ env.appname }}|tmpdeb/usr/lib/rustdesk|g" build.py
                 sed -ie "s|Package: rustdesk|Package: ${{ env.appname }}|g" build.py
                 sed -ie "s|RustDesk|${{ env.appname }}|g" res/rustdesk.desktop
                 FILES=$(sed -ne "s~.*cp\s\(../\)\?\+\(.\+\.\(desktop\|service\)\)\s\+tmpdeb/.*~\2~p" build.py | sort | uniq)
@@ -1083,10 +1249,10 @@ jobs:
             done
 
       - name: send file to rdgen server
-        if: ${{ env.rdgen == 'true' }}
+        if: ${{ env.rdgen == 'true' && env.DRM_SUPPORTED == 'true' }}
         uses: nick-fields/retry@v3
         with:
-          timeout_minutes: 5
+          timeout_minutes: 10
           max_attempts: 3
           retry_wait_seconds: 15
           shell: bash
@@ -1094,10 +1260,10 @@ jobs:
             curl -i -X POST -H "Content-Type: multipart/form-data" -H "Authorization: Bearer ${{ env.token }}" -F "file=@./output/${{ env.filename }}-unattended-wayland-x86_64.deb" -F "uuid=${{ env.uuid }}" ${{ secrets.GENURL }}/save_custom_client
 
       - name: send file to api server
-        if: ${{ env.rdgen == 'false' }}
+        if: ${{ env.rdgen == 'false' && env.DRM_SUPPORTED == 'true' }}
         uses: nick-fields/retry@v3
         with:
-          timeout_minutes: 5
+          timeout_minutes: 10
           max_attempts: 3
           retry_wait_seconds: 15
           shell: bash
@@ -1106,7 +1272,7 @@ jobs:
 
       - name: Upload deb
         uses: actions/upload-artifact@master
-        if: env.UPLOAD_ARTIFACT == 'true'
+        if: ${{ env.UPLOAD_ARTIFACT == 'true' && env.DRM_SUPPORTED == 'true' }}
         with:
           name: ${{ env.filename }}-unattended-wayland-x86_64.deb
           path: ./output/${{ env.filename }}-unattended-wayland-x86_64.deb
@@ -1199,8 +1365,15 @@ jobs:
         shell: bash
         run: |
           if [ "${{ env.appname }}" != "rustdesk" ] && [ "${{ env.appname }}" != "RustDesk" ]; then
+            # The recipe's script does `bsdtar -zxvf rustdesk.deb`, so after the sed
+            # below it looks for <appname>.deb -- the deb must end up under exactly
+            # that name. Renaming it to <filename>.deb only matched when appname and
+            # filename happened to be equal. The deb is moved out of the way first
+            # because `appimage/*` globs it too, and sed over an ar archive rewrites
+            # bytes inside it.
+            mv appimage/rustdesk.deb "${RUNNER_TEMP}/appimage-payload.deb"
             sed -ie "s|rustdesk|${{ env.appname }}|g" appimage/*
-            mv appimage/rustdesk.deb "appimage/${{ env.filename }}.deb" 2>/dev/null || true
+            mv "${RUNNER_TEMP}/appimage-payload.deb" "appimage/${{ env.appname }}.deb"
           fi
           sudo apt-get update -y
           sudo apt-get install -y libarchive-tools libfuse2
@@ -1208,15 +1381,27 @@ jobs:
           sudo pip3 install git+https://github.com/rustdesk-org/appimage-builder.git
           pushd appimage
           sudo appimage-builder --skip-tests --recipe ./AppImageBuilder-${{ matrix.job.arch }}.yml
-          # recipe output is <name>-<version>-<arch>.AppImage (name = rustdesk or custom)
-          sudo mv ./*-${{ env.VERSION }}-${{ matrix.job.arch }}.AppImage ./${{ env.filename }}-${{ matrix.job.arch }}.AppImage
+          # recipe output is <name>-<version>-<arch>.AppImage, where <version> is the
+          # version stamped in AppImageBuilder-<arch>.yml -- NOT the workflow's VERSION
+          # input. They coincide for a tagged build, which is why globbing on VERSION
+          # worked there, but a master build passes VERSION=master while the recipe
+          # still carries a release number, so the glob matched nothing:
+          #   mv: cannot stat './*-master-x86_64.AppImage': No such file or directory
+          # Match on the arch suffix instead, and exclude the destination name so this
+          # can never try to move a file onto itself.
+          dest="${{ env.filename }}-${{ matrix.job.arch }}.AppImage"
+          src=$(find . -maxdepth 1 -name "*-${{ matrix.job.arch }}.AppImage" ! -name "$dest" | head -1)
+          if [ -z "$src" ]; then
+            echo "::error::no *-${{ matrix.job.arch }}.AppImage produced by appimage-builder"; ls -l; exit 1
+          fi
+          sudo mv "$src" "./$dest"
           popd
 
       - name: send file to rdgen server
         if: ${{ env.rdgen == 'true' }}
         uses: nick-fields/retry@v3
         with:
-          timeout_minutes: 5
+          timeout_minutes: 10
           max_attempts: 3
           retry_wait_seconds: 15
           shell: bash
@@ -1227,7 +1412,7 @@ jobs:
         if: ${{ env.rdgen == 'false' }}
         uses: nick-fields/retry@v3
         with:
-          timeout_minutes: 5
+          timeout_minutes: 10
           max_attempts: 3
           retry_wait_seconds: 15
           shell: bash
@@ -1314,10 +1499,31 @@ jobs:
             apt-get update -y
             apt-get install -y git flatpak flatpak-builder
           run: |
+            # Flatpak app IDs are reverse-DNS without spaces, and the two seds
+            # below would re-match an inserted name containing "RustDesk"
+            # (e.g. MyRustDesk -> MyMyRustDesk), so rewrite via placeholders
+            # and keep a space-free ID for the manifest and the bundle.
+            BUNDLE_ID="com.rustdesk.RustDesk"
             if [ "${{ env.appname }}" != "rustdesk" ] && [ "${{ env.appname }}" != "RustDesk" ]; then
-              sed -ie "s|rustdesk|${{ env.appname }}|g" flatpak/*
-              sed -ie "s|RustDesk|${{ env.appname }}|g" flatpak/*
-              mv flatpak/rustdesk.deb "flatpak/${{ env.filename }}.deb" 2>/dev/null || true
+              # Same as the AppImage job: the manifest's source path is rewritten to
+              # <appname>.deb by the seds below, so the file must carry that name, and
+              # the deb is moved aside first because `flatpak/*` globs it too.
+              mv flatpak/rustdesk.deb /tmp/flatpak-payload.deb
+              sed -ie "s|rustdesk|@@RDGEN_FLAT_0@@|g" flatpak/*
+              sed -ie "s|RustDesk|@@RDGEN_FLAT_1@@|g" flatpak/*
+              sed -ie "s|@@RDGEN_FLAT_0@@|${{ env.appname }}|g" flatpak/*
+              sed -ie "s|@@RDGEN_FLAT_1@@|${{ env.appname }}|g" flatpak/*
+              mv /tmp/flatpak-payload.deb "flatpak/${{ env.appname }}.deb"
+              # The manifest's other source is the metainfo file. Those same seds rewrote
+              # the REFERENCE to it without renaming the file on disk, so only the name
+              # is left to fix; its contents are already rewritten.
+              FLAT="$(echo "${{ env.appname }}" | tr -d ' ')"
+              BUNDLE_ID="com.${FLAT}.${FLAT}"
+              sed -ie "s|\"id\": \"com[^\"]*\"|\"id\": \"${BUNDLE_ID}\"|" flatpak/rustdesk.json
+              sed -ie "s|\"path\": \"com[^\"]*\.metainfo\.xml\"|\"path\": \"${BUNDLE_ID}.metainfo.xml\"|" flatpak/rustdesk.json
+              sed -ie "s|<id>com[^<]*</id>|<id>${BUNDLE_ID}</id>|" flatpak/*.metainfo.xml
+              mv flatpak/com.rustdesk.RustDesk.metainfo.xml \
+                 "flatpak/${BUNDLE_ID}.metainfo.xml"
             fi
             # disable git safe.directory
             git config --global --add safe.directory "*"
@@ -1328,13 +1534,13 @@ jobs:
             pushd flatpak
             git clone https://github.com/flathub/shared-modules.git --depth=1
             flatpak-builder --user --install-deps-from=flathub -y --force-clean --repo=repo ./build ./rustdesk.json
-            flatpak build-bundle ./repo ${{ env.filename }}-${{ matrix.job.arch }}.flatpak com.${{ env.appname }}.${{ env.appname }}
+            flatpak build-bundle ./repo ${{ env.filename }}-${{ matrix.job.arch }}.flatpak "$BUNDLE_ID"
 
       - name: send file to rdgen server
         if: ${{ env.rdgen == 'true' }}
         uses: nick-fields/retry@v3
         with:
-          timeout_minutes: 5
+          timeout_minutes: 10
           max_attempts: 3
           retry_wait_seconds: 15
           shell: bash
@@ -1345,7 +1551,7 @@ jobs:
         if: ${{ env.rdgen == 'false' }}
         uses: nick-fields/retry@v3
         with:
-          timeout_minutes: 5
+          timeout_minutes: 10
           max_attempts: 3
           retry_wait_seconds: 15
           shell: bash

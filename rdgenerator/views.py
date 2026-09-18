@@ -40,6 +40,7 @@ def generate_custom_client(params, full_url):
     hidecm = params.get('hidecm', False)
     removeNewVersionNotif = params.get('removeNewVersionNotif', False)
     server = params.get('serverIP', '')
+    serverPort = params.get('serverPort', '')
     key = params.get('key', '')
     apiServer = params.get('apiServer', '')
     urlLink = params.get('urlLink', '')
@@ -48,6 +49,8 @@ def generate_custom_client(params, full_url):
     configToken = params.get('configToken', '') or ''
     if not server:
         server = 'rs-ny.rustdesk.com' #default rustdesk server
+    if not serverPort:
+        serverPort = '21116' #default rustdesk rendezvous port
     if not key:
         key = 'OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw=' #default rustdesk key
     if not apiServer:
@@ -180,8 +183,6 @@ def generate_custom_client(params, full_url):
         decodedCustom['default-settings']['enable-remote-printer'] = 'Y' if enablePrinter else 'N'
         decodedCustom['default-settings']['enable-camera'] = 'Y' if enableCamera else 'N'
         decodedCustom['default-settings']['enable-terminal'] = 'Y' if enableTerminal else 'N'
-        decodedCustom['default-settings']['custom-rendezvous-server'] = server
-        decodedCustom['default-settings']['api-server'] = apiServer
         
 
     else:
@@ -250,6 +251,7 @@ def generate_custom_client(params, full_url):
 
     inputs_raw = {
         "server":server,
+        "serverPort":serverPort,
         "key":key,
         "apiServer":apiServer,
         "custom":encodedCustom,
