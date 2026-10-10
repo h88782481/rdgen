@@ -29,7 +29,8 @@ env:
   TAG_NAME: "${{ inputs.upload-tag }}"
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
   # vcpkg version: 2024.07.12
-  VCPKG_COMMIT_ID: "${{ inputs.version == 'master' && '9e593bb18ea69cc5095e012465dcd675a822ed0d' || '120deac3062162151622ca4860575a33844ba10b' }}"
+  VCPKG_COMMIT_ID: "9e593bb18ea69cc5095e012465dcd675a822ed0d"
+  VCPKG_CMAKE_VERSION: "4.3.0"
   ARMV7_VCPKG_COMMIT_ID: "6f29f12e82a8293156836ad81cc9bf5af41fe836"
   VERSION: "${{ inputs.version }}"
   NDK_VERSION: "r28c"
@@ -178,9 +179,18 @@ jobs:
           name: bridge-artifact
           path: ./
 
+      # vcpkg 2026.07.29's SPDX scripts require CMake 4.3+, but this ARM64 runner selects CMake 3.31.
+      - name: Install CMake for vcpkg on Linux ARM64
+        if: matrix.job.arch == 'aarch64' && env.UPLOAD_ARTIFACT == 'true'
+        run: |
+          python3 -m pip install --user "cmake==${VCPKG_CMAKE_VERSION}"
+          user_base="$(python3 -m site --user-base)"
+          "${user_base}/bin/cmake" --version
+          echo "${user_base}/bin" >> "${GITHUB_PATH}"
+
       - name: Setup vcpkg with Github Actions binary cache
         if: matrix.job.arch == 'x86_64' || env.UPLOAD_ARTIFACT == 'true'
-        uses: lukka/run-vcpkg@v11
+        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
         with:
           vcpkgDirectory: /opt/artifacts/vcpkg
           vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
@@ -741,7 +751,6 @@ jobs:
     # artifacts (deploy needs only build-rustdesk-linux, build-flatpak and
     # build-appimage). Gated the way bridge.yml already tells the two sources
     # apart.
-    if: ${{ inputs.version == 'master' }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -799,16 +808,6 @@ jobs:
         with:
           repository: rustdesk/rustdesk
           submodules: recursive
-
-      - name: Detect DRM support
-        run: |
-          if grep -q "'--drm'" build.py; then
-            echo "DRM_SUPPORTED=true" >> $GITHUB_ENV
-            echo "::notice::DRM/KMS capture backend detected in this RustDesk version"
-          else
-            echo "DRM_SUPPORTED=false" >> $GITHUB_ENV
-            echo "::notice::DRM/KMS capture backend not present in this RustDesk version, skipping DRM build"
-          fi
 
       - name: Set Swap Space
         uses: pierotofy/set-swap-space@master
@@ -880,13 +879,7 @@ jobs:
           b = importlib.util.module_from_spec(spec)
           sys.argv = ["build.py"]
           spec.loader.exec_module(b)
-          # build_libdrmtap_so() exists only in recent RustDesk sources
-          # (master); tagged 1.4.x releases don't have it - skip gracefully
-          # instead of failing the whole drm job.
-          if hasattr(b, 'build_libdrmtap_so'):
-              print(f"::notice::built {b.build_libdrmtap_so()}")
-          else:
-              print("::notice::build_libdrmtap_so not present in this RustDesk version, skipping")
+          print(f"::notice::built {b.build_libdrmtap_so()}")
           PY
         shell: bash
 
@@ -1085,8 +1078,7 @@ jobs:
           name: bridge-artifact
           path: ./
 
-      - uses: rustdesk-org/run-on-arch-action@d3fcfbb632b84cf7f6bc772bfaaa2c2f4f8789a8
-        if: env.DRM_SUPPORTED == 'true'
+      - uses: rustdesk-org/run-on-arch-action@d3fcfbb632b84cf7f6bc772bfaaa2c2f4f8789a8 # no release tag; commit 2026-05-26
         name: Build rustdesk
         id: vcpkg
         with:
@@ -1111,14 +1103,12 @@ jobs:
                gcc \
                git \
                g++ \
-               imagemagick \
                libayatana-appindicator3-dev \
                libasound2-dev \
                libclang-10-dev \
                libgstreamer1.0-dev \
                libgstreamer-plugins-base1.0-dev \
                libgtk-3-dev \
-               libpam0g-dev \
                libpulse-dev \
                libva-dev \
                libxcb-randr0-dev \
@@ -1139,6 +1129,7 @@ jobs:
                libssl-dev
             # we have libopus compiled by us.
             apt-get remove -y libopus-dev || true
+            # output devs
             ls -l ./
             tree -L 3 /opt/artifacts/vcpkg/installed
           run: |
@@ -1159,6 +1150,7 @@ jobs:
             pushd /workspace
             export VCPKG_ROOT=/opt/artifacts/vcpkg
             export DRMTAP_PREBUILT_DIR=/workspace/third_party/libdrmtap/build-pkg
+            export DRMTAP_ALLOW_UNPINNED=1
             FEATURES=$(python3 ./build.py --flutter --drm --hwcodec --unix-file-copy-paste --print-features)
             for want in drm drm-wake; do
               case ",$FEATURES," in
