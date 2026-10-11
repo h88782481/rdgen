@@ -428,7 +428,14 @@ jobs:
         continue-on-error: true
         shell: bash
         run: |
-          sed -i -e 's|com.carriez.flutter_hbb|${{ env.androidappid }}|' ./flutter/android/app/build.gradle
+          # Only replace applicationId: newer rustdesk (AGP 8) declares
+          # namespace "com.carriez.flutter_hbb" in build.gradle and keeps the same
+          # package= in AndroidManifest.xml, while the Kotlin sources live under
+          # that package. Replacing every occurrence also rewrites the namespace,
+          # making AGP fail with "Incorrect package=... found in source
+          # AndroidManifest.xml" because manifest package and namespace differ.
+          sed -i -E "s|applicationId [\"']com\.carriez\.flutter_hbb[\"']|applicationId \"${{ env.androidappid }}\"|" ./flutter/android/app/build.gradle
+          grep -n 'applicationId' ./flutter/android/app/build.gradle
 
       - name: change download link to custom
         if: env.downloadLink != 'https://rustdesk.com/download'
