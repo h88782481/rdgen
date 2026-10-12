@@ -10,8 +10,8 @@ rdpatch.py — 给 RustDesk 客户端源码打入「远程配置中心 + 自定�
   P3  解析 version 字段  -> 用 serde_json::Value 读 url + version   (src/common.rs)
   P4  直连下载          -> 直接用服务器返回的下载链接,不再拼 GitHub
       P4b Flutter 桌面; P4c Linux/便携; P4d Android; P4e Sciter
-  P5  启动拉取配置       -> fetch_remote_config(): global_init;
-      Android/iOS 另在 start_server 入口拉一次(开机服务不走 global_init)
+  P5  启动拉取 + 后台刷新 -> fetch_remote_config(): global_init;
+      Android/iOS 另在 start_server 入口初始化(开机服务不走 global_init)
   P6  放开 custom 限制   -> 定制客户端也检查/提示更新
   P7  隐藏层 host/key/api,且优先于 Windows exe license
   P8  加密落盘 last-good -> LocalConfig `_rdc`; persist 时也会 fetch
@@ -300,6 +300,7 @@ pub const REMOTE_CONFIG_SERVER: &str = "{SERVER}";
 pub const REMOTE_CONFIG_TOKEN: &str = "{TOKEN}";
 
 const REMOTE_CFG_CACHE_KEY: &str = "_rdc";
+const REMOTE_CFG_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 
 lazy_static::lazy_static! {{
     // Hidden layer: do NOT write option keys, so Settings UI won't show host/key/api
@@ -313,9 +314,9 @@ static REMOTE_CFG_FETCH_OK: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 /// Fetch host/key/api from self-hosted config server into the hidden layer.
-/// Sync (spawn + join) so config is ready before rendezvous; Once = once per process.
-/// HTTP first: on success apply + encrypt cache. On failure decrypt last-good.
-/// If neither, fall back to compile-time rdgen sed constants.
+/// Fetch synchronously before rendezvous, then refresh in one background thread per process.
+/// At startup, fall back to last-good or compile-time defaults on failure.
+/// Background failures keep the current config; unchanged values do not rewrite the cache.
 /// NOTE: keep this block ASCII-only -- allowCustom.py must read common.rs as text on
 /// Windows runners (default cp1252) without UnicodeDecodeError.
 pub fn fetch_remote_config() {{
@@ -325,6 +326,10 @@ pub fn fetch_remote_config() {{
             do_fetch_remote_config();
         }})
         .join();
+        std::thread::spawn(|| loop {{
+            std::thread::sleep(REMOTE_CFG_REFRESH_INTERVAL);
+            try_fetch_remote_config();
+        }});
     }});
 }}
 
@@ -354,16 +359,23 @@ fn dec_remote_cfg_blob(s: &str) -> String {{
     String::from_utf8_lossy(&remote_cfg_mix(&mixed)).to_string()
 }}
 
-fn apply_hidden_remote_cfg(host: &str, key: &str, api: &str) {{
-    if !host.is_empty() {{
-        *hbb_common::config::PROD_RENDEZVOUS_SERVER.write().unwrap() = host.to_owned();
+fn apply_hidden_remote_cfg(host: &str, key: &str, api: &str) -> bool {{
+    let mut changed = false;
+    for (target, value) in [
+        (&*hbb_common::config::PROD_RENDEZVOUS_SERVER, host),
+        (&*REMOTE_CFG_KEY, key),
+        (&*REMOTE_CFG_API, api),
+    ] {{
+        if value.is_empty() {{
+            continue;
+        }}
+        let mut current = target.write().unwrap();
+        if *current != value {{
+            *current = value.to_owned();
+            changed = true;
+        }}
     }}
-    if !key.is_empty() {{
-        *REMOTE_CFG_KEY.write().unwrap() = key.to_owned();
-    }}
-    if !api.is_empty() {{
-        *REMOTE_CFG_API.write().unwrap() = api.to_owned();
-    }}
+    changed
 }}
 
 fn load_cached_remote_config() -> bool {{
@@ -465,10 +477,11 @@ fn try_fetch_remote_config() -> bool {{
         log::warn!("fetch_remote_config empty payload");
         return false;
     }}
-    apply_hidden_remote_cfg(host, key, api);
-    REMOTE_CFG_FETCH_OK.store(true, std::sync::atomic::Ordering::SeqCst);
-    save_cached_remote_config();
-    log::info!("remote config applied (hidden) from {{}}", REMOTE_CONFIG_SERVER);
+    let changed = apply_hidden_remote_cfg(host, key, api);
+    if !REMOTE_CFG_FETCH_OK.swap(true, std::sync::atomic::Ordering::SeqCst) || changed {{
+        save_cached_remote_config();
+        log::info!("remote config applied (hidden) from {{}}", REMOTE_CONFIG_SERVER);
+    }}
     true
 }}
 
