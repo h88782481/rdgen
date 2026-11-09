@@ -46,11 +46,21 @@ def generate_custom_client(params, full_url):
     user_secret = params.get('sh_secret_field', '')
     selfhosted = (_settings.SH_SECRET == user_secret)
     platform = params.get('platform', 'windows')
-    version = params.get('version', '1.4.9')
+    version = params.get('version', '1.5.1')
+    app_version = params.get('app_version', '')
+    # app_version overrides the version string embedded in the built client
+    # without changing the git tag that version selects. If left empty, the
+    # RustDesk build's own version (from the checked-out tag) is used.
     delayFix = params.get('delayFix', True)
     xOffline = params.get('xOffline', False)
     hidecm = params.get('hidecm', False)
     removeNewVersionNotif = params.get('removeNewVersionNotif', False)
+    update_public_key = params.get('update_public_key', '')
+    # If a custom update public key is provided, force the "remove new version
+    # notification" behaviour off so the client keeps checking for updates via
+    # the self-hosted update URL instead.
+    if update_public_key:
+        removeNewVersionNotif = False
     server = params.get('serverIP', '')
     serverPort = params.get('serverPort', '')
     key = params.get('key', '')
@@ -74,9 +84,10 @@ def generate_custom_client(params, full_url):
     direction = params.get('direction', 'both')
     installation = params.get('installation', 'installationY')
     settings = params.get('settings', 'settingsY')
-    appname = params.get('appname', '')
-    if not appname:
-        appname = "rustdesk"
+    appname_display = params.get('appname', '')
+    if not appname_display:
+        appname_display = "rustdesk"
+    appname = re.sub(r"[:|\\/]", "", appname_display).replace(" ", "")
     filename = params.get('exename', 'rustdesk')
     compname = params.get('compname', '')
     if not compname:
@@ -159,7 +170,7 @@ def generate_custom_client(params, full_url):
     if settings == "settingsN":
         decodedCustom['disable-settings'] = 'Y'
     if appname.upper != "rustdesk".upper and appname != "":
-        decodedCustom['app-name'] = appname
+        decodedCustom['app-name'] = appname_display
     decodedCustom['override-settings'] = {}
     decodedCustom['default-settings'] = {}
     if permPass != "":
@@ -285,6 +296,7 @@ def generate_custom_client(params, full_url):
         "rdgen":'true',
         "xOffline": 'true' if xOffline else 'false',
         "removeNewVersionNotif": 'true' if removeNewVersionNotif else 'false',
+        "update_public_key": update_public_key,
         "compname": compname,
         "androidappid":androidappid,
         "filename":filename,
@@ -317,6 +329,7 @@ def generate_custom_client(params, full_url):
         "ref":_settings.GHBRANCH,
         "inputs":{
             "version":version,
+            "app_version":app_version,
             "zip_url":zip_url
         },
         "return_run_details": True
@@ -428,6 +441,42 @@ def generator_view(request):
     return render(request, 'generator.html', {'form': form})
 
 
+def _expected_files_for_platform(filename, platform):
+    """Return the list of expected output filenames for a given platform."""
+    if platform == 'windows':
+        return [f"{filename}.exe", f"{filename}.msi"]
+    elif platform == 'windows-x86':
+        return [f"{filename}.exe"]
+    elif platform == 'linux':
+        return [
+            f"{filename}-x86_64.deb",
+            f"{filename}-unattended-wayland-x86_64.deb",
+            f"{filename}-x86_64.rpm",
+            f"{filename}-suse-x86_64.rpm",
+            f"{filename}-x86_64.pkg.tar.zst",
+            f"{filename}-aarch64.deb",
+            f"{filename}-aarch64.rpm",
+            f"{filename}-suse-aarch64.rpm",
+            f"{filename}-aarch64.pkg.tar.zst",
+            f"{filename}-x86_64.AppImage",
+            f"{filename}-aarch64.AppImage",
+            f"{filename}-x86_64.flatpak",
+            f"{filename}-aarch64.flatpak",
+        ]
+    elif platform == 'android':
+        return [
+            f"{filename}-aarch64.apk",
+            f"{filename}-x86_64.apk",
+            f"{filename}-armv7.apk",
+        ]
+    elif platform == 'macos':
+        return [
+            f"{filename}-x86_64.dmg",
+            f"{filename}-aarch64.dmg",
+        ]
+    return []
+
+
 def check_for_file(request):
     filename = request.GET.get('filename')
     uuid = request.GET.get('uuid')
@@ -442,10 +491,23 @@ def check_for_file(request):
     github_log_url = result['github_log_url']
 
     if gh_run.status == "success":
+        expected = _expected_files_for_platform(filename, platform)
+        existing_files = []
+        missing_files = []
+        for f in expected:
+            file_path = os.path.join('exe', uuid, f)
+            if os.path.isfile(file_path):
+                existing_files.append(f)
+            else:
+                missing_files.append(f)
+
         return render(request, 'generated.html', {
-            'filename': filename, 
-            'uuid': uuid, 
-            'platform': platform
+            'filename': filename,
+            'uuid': uuid,
+            'platform': platform,
+            'existing_files': existing_files,
+            'missing_files': missing_files,
+            'github_log_url': github_log_url,
         })
         
     elif gh_run.status in ['failure', 'cancelled', 'timed_out', 'skipped', 'action_required']:
@@ -653,3 +715,5 @@ def get_zip(request):
         })
 
     return response
+
+
