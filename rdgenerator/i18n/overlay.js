@@ -205,6 +205,12 @@
       "注意：请确保已安装所需的依赖项。",
     "Note: You may need to enable \"Unknown Sources\" in device settings.":
       "注意：你可能需要在设备设置中启用“未知来源”。",
+    "No files available for download.": "没有可下载的文件。",
+    "Failed Builds": "构建失败的文件",
+    "The following files were not generated (the build for these may have failed):":
+      "以下文件未生成（对应构建可能失败了）：",
+    "View full build log:": "查看完整构建日志：",
+    "GitHub Actions Run": "GitHub Actions 运行记录",
 
     // ---------- failure.html ----------
     "Build Failure": "构建失败",
