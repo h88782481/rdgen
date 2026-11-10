@@ -3,18 +3,20 @@
 rdpatch.py — 给 RustDesk 客户端源码打入「远程配置中心 + 自定义更新服务器」补丁。
 
 在 rdgen 的 GitHub Actions 里,checkout 好 rustdesk 源码后运行本脚本。
-定点正则替换,适配官方客户端 **1.4.0–1.4.9**(含 nightly)。
+定点正则替换,一套规则通配官方客户端 **1.4.0–1.5.x**(含 nightly),不按版本分支。
 
   P1  版本检查 URL      -> 指向自建服务器 /version/latest        (hbb_common/src/lib.rs)
   P2  版本检查带 token   -> Authorization: Bearer <token>          (src/common.rs)
-  P3  解析 version 字段  -> 用 serde_json::Value 读 url + version   (src/common.rs)
-  P4  直连下载          -> 直接用服务器返回的下载链接,不再拼 GitHub
-      P4b Flutter 桌面; P4c Linux/便携; P4d Android; P4e Sciter
+  P3  解析 version 字段  -> 用 serde_json::Value 读 url + version;
+      1.5.1+ 的 GitHub release URL 校验一并替换                  (src/common.rs)
+  P4  更新跳转浏览器     -> 所有平台都打开服务器返回的下载链接,不走内置下载/安装
+      P4a Flutter 桌面; P4b Android; P4c Sciter
   P5  启动拉取 + 后台刷新 -> fetch_remote_config(): global_init;
       Android/iOS 另在 start_server 入口初始化(开机服务不走 global_init)
   P6  放开 custom 限制   -> 定制客户端也检查/提示更新
   P7  隐藏层 host/key/api,且优先于 Windows exe license
   P8  加密落盘 last-good -> LocalConfig `_rdc`; persist 时也会 fetch
+  P9  关闭静默自动更新   -> Windows/macOS 后台不再自动安装,并隐藏「自动更新」开关
 
 配置来自环境变量:
   RD_CONFIG_SERVER   自建服务器地址,例如 https://cfg.example.com  (必填)
@@ -100,15 +102,16 @@ def common_rs(text):
         changed_any = True
         print(f"       P2 auth header applied to {c} request(s)")
 
-    # P3: 用 serde_json::Value 解析 url + version
+    # P3: 用 serde_json::Value 解析 url + version。
+    # 1.4.x-1.5.0 从 url 末段取版本; 1.5.1+ 还要求 url 是 GitHub release 页,一并替换。
     text, c = sub_once(
-        r'let resp: hbb_common::VersionCheckResponse = serde_json::from_slice\(&bytes\)\?;\s*\n'
-        r'\s*let response_url = resp\.url;\s*\n'
-        r"\s*let latest_release_version = response_url\.rsplit\('/'\)\.next\(\)\.unwrap_or_default\(\);",
+        r'let resp: hbb_common::VersionCheckResponse = serde_json::from_slice\(&bytes\)\?;\s*'
+        r'let response_url = resp\.url;.*?let latest_release_version = [^;]*;',
         "let resp: serde_json::Value = serde_json::from_slice(&bytes)?;\n"
         '    let response_url = resp.get("url").and_then(|v| v.as_str()).unwrap_or_default().to_string();\n'
         '    let latest_release_version = resp.get("version").and_then(|v| v.as_str()).unwrap_or_default().to_string();',
         text,
+        flags=re.DOTALL,
     )
     changed_any = changed_any or c
 
@@ -504,43 +507,6 @@ patch_file("src/common.rs", "P2/P3/P5/P6 common.rs", common_rs, critical=True)
 
 
 # --------------------------------------------------------------------------
-# P4: src/updater.rs 直连下载(去掉 tag->download 与文件名拼接)
-# --------------------------------------------------------------------------
-def updater_rs(text):
-    return sub_once(
-        r'let download_url = update_url\.replace\("tag", "download"\);.*?'
-        r'-x86-sciter\.exe", download_url, version\)\s*\};',
-        "let download_url = update_url.clone();\n"
-        "        let version = download_url.split('/').last().unwrap_or_default();",
-        text,
-        flags=re.DOTALL,
-    )
-
-
-patch_file("src/updater.rs", "P4 direct download (updater.rs)", updater_rs, critical=True)
-
-
-# --------------------------------------------------------------------------
-# P4b: Flutter 桌面下载直接用返回链接
-# --------------------------------------------------------------------------
-def update_progress_dart(text):
-    return sub_once(
-        r"String downloadUrl = releasePageUrl\.replaceAll\('tag', 'download'\);.*?"
-        r"downloadUrl = '\$downloadUrl/\$downloadFile';",
-        "String downloadUrl = releasePageUrl;",
-        text,
-        flags=re.DOTALL,
-    )
-
-
-patch_file(
-    "flutter/lib/desktop/widgets/update_progress.dart",
-    "P4b direct download (flutter)",
-    update_progress_dart,
-)
-
-
-# --------------------------------------------------------------------------
 # P6b: Flutter 放开 custom client 更新提示
 # --------------------------------------------------------------------------
 def common_dart(text):
@@ -554,30 +520,29 @@ def common_dart(text):
 patch_file("flutter/lib/common.dart", "P6b checkUpdate guard (flutter)", common_dart)
 
 
+# --------------------------------------------------------------------------
+# P4a / P6c: Flutter 桌面更新卡片整段替换 —— 定制客户端也显示,所有平台都用浏览器
+# 打开服务器返回的链接(原版 Windows/macOS 已安装时走内置下载安装)。
+# --------------------------------------------------------------------------
 def desktop_home_dart(text):
-    changed_any = False
-    text, c = sub_once(
-        r'if \(!bind\.isCustomClient\(\) &&\s*\n'
-        r'\s*updateUrl\.isNotEmpty &&\s*\n'
-        r'\s*!isCardClosed &&\s*\n'
-        r"\s*bind\.mainUriPrefixSync\(\)\.contains\('rustdesk'\)\) \{",
-        "if (updateUrl.isNotEmpty &&\n        !isCardClosed) {",
+    return sub_once(
+        r"if \(!bind\.isCustomClient\(\) &&\s*updateUrl\.isNotEmpty &&.*?\);\n    \}",
+        "if (updateUrl.isNotEmpty && !isCardClosed) {\n"
+        "      return buildInstallCard(\n"
+        '          "Status",\n'
+        '          "${translate("new-version-of-{${bind.mainGetAppNameSync()}}-tip")} (${bind.mainGetNewVersion()}).",\n'
+        "          'Download',\n"
+        "          () => launchUrl(Uri.parse(updateUrl)),\n"
+        "          closeButton: true);\n"
+        "    }",
         text,
+        flags=re.DOTALL,
     )
-    changed_any = changed_any or c
-    # P4c: Linux / portable Download 按钮走 config-server 直链,不再打开 rustdesk.com
-    text, c = sub_once(
-        r"final Uri url = Uri\.parse\('https://rustdesk.com/download'\);",
-        "final Uri url = Uri.parse(updateUrl);",
-        text,
-    )
-    changed_any = changed_any or c
-    return text, changed_any
 
 
 patch_file(
     "flutter/lib/desktop/pages/desktop_home_page.dart",
-    "P6c/P4c update card + direct url (flutter desktop)",
+    "P4a/P6c update card -> browser (flutter desktop)",
     desktop_home_dart,
     critical=True,
 )
@@ -591,9 +556,9 @@ def connection_page_dart(text):
         text,
     )
     changed_any = changed_any or c
-    # P4d: Android 更新条打开服务器返回的直链
+    # P4b: Android 更新条打开服务器返回的链接(rdgen 可能已把 rustdesk.com/download 换成自定义地址)
     text, c = sub_once(
-        r"final url = 'https://rustdesk.com/download';",
+        r"final url = '[^']*';",
         "final url = updateUrl;",
         text,
     )
@@ -603,20 +568,21 @@ def connection_page_dart(text):
 
 patch_file(
     "flutter/lib/mobile/pages/connection_page.dart",
-    "P6d/P4d mobile update card + direct url",
+    "P6d/P4b mobile update card -> browser",
     connection_page_dart,
     critical=True,
 )
 
 
 # --------------------------------------------------------------------------
-# P4e / P6e: Sciter (windows-x86) 直链 + 定制客户端也显示下载按钮
+# P4c / P6e / P9: Sciter (windows-x86) 打开服务器返回的链接 + 定制客户端也显示
+# 下载按钮 + 去掉「自动更新」菜单项
 # --------------------------------------------------------------------------
 def index_tis(text):
     changed_any = False
     text, c = sub_once(
-        r'handler\.open_url\("https://rustdesk.com/download"\);',
-        "handler.open_url(software_update_url);",
+        r'(event click \$\(#install-me\) \{\s*)handler\.open_url\("[^"]*"\);',
+        r"\1handler.open_url(software_update_url);",
         text,
     )
     changed_any = changed_any or c
@@ -630,29 +596,57 @@ def index_tis(text):
         flags=re.DOTALL,
     )
     changed_any = changed_any or c
+    text, c = sub_once(r'\n[^\n]*<li #allow-auto-update>[^\n]*', "", text)
+    changed_any = changed_any or c
     return text, changed_any
 
 
-patch_file("src/ui/index.tis", "P4e/P6e Sciter direct download url", index_tis)
+patch_file("src/ui/index.tis", "P4c/P6e/P9 Sciter update -> browser", index_tis)
+
+
+# --------------------------------------------------------------------------
+# P9: 关闭静默自动更新 —— 更新统一由用户在浏览器下载安装。
+# allow-auto-update 判断恒为 false: Windows check_update 与 macOS check_update_as_root(1.5+)
+# 都直接返回。手动检查(manually)无调用方,不受影响。
+# --------------------------------------------------------------------------
+def updater_rs(text):
+    text, n = re.subn(
+        r'config::Config::get_bool_option\((?:config::)?keys::OPTION_ALLOW_AUTO_UPDATE\)',
+        "false",
+        text,
+    )
+    return text, n > 0
+
+
+patch_file("src/updater.rs", "P9 disable silent auto-update", updater_rs, critical=True)
+
+
+def desktop_setting_dart(text):
+    return sub_once(
+        r'final showAutoUpdate =[^;]*;',
+        "final showAutoUpdate = false;",
+        text,
+    )
+
+
+patch_file(
+    "flutter/lib/desktop/pages/desktop_setting_page.dart",
+    "P9 hide auto-update option (flutter)",
+    desktop_setting_dart,
+)
 
 
 # --------------------------------------------------------------------------
 # P5: Android/iOS start_server 入口拉配置。开机 MainService 只走这里,不经过
 # global_init / Flutter initialize。桌面 start_server 签名不同,不会误打。
+# 1.5.1+ 函数体多了 trusted_devices 初始化,故只锚定签名、插在函数体最前。
 # --------------------------------------------------------------------------
 def server_rs(text):
     return sub_once(
-        r'#\[cfg\(any\(target_os = "android", target_os = "ios"\)\)\]\n'
+        r'(#\[cfg\(any\(target_os = "android", target_os = "ios"\)\)\]\n'
         r'#\[tokio::main\]\n'
-        r'pub async fn start_server\(_is_server: bool\) \{\n'
-        r'    crate::RendezvousMediator::start_all\(\)\.await;\n'
-        r'\}',
-        '#[cfg(any(target_os = "android", target_os = "ios"))]\n'
-        "#[tokio::main]\n"
-        "pub async fn start_server(_is_server: bool) {\n"
-        "    crate::common::fetch_remote_config();\n"
-        "    crate::RendezvousMediator::start_all().await;\n"
-        "}",
+        r'pub async fn start_server\(_is_server: bool\) \{\n)',
+        r"\1    crate::common::fetch_remote_config();\n",
         text,
     )
 
