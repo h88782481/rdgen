@@ -102,11 +102,11 @@
     "Accept sessions via password": "通过密码接受会话",
     "Accept sessions via click": "通过点击接受会话",
     "Accepts sessions via both": "以上两种方式均可",
-    "To use the hide connection window feature, please set a permanent password.":
-      "要使用隐藏连接窗口功能，请先设置永久密码。",
+    "Enabling \"Allow hiding\" only turns on the capability (allow-hide-cm=Y). It does NOT force a permanent password or change the approve mode here. The connection window is hidden only when, on the client at runtime, you set Approve mode = password-only AND Verification = permanent-password-only AND a permanent password is set. Leaving the defaults (both passwords) keeps the window visible. You can leave the password blank here.":
+      "勾选“允许隐藏”只会打开这项能力（allow-hide-cm=Y），不会在这里强制设置永久密码，也不会改掉密码接受方式。连接窗口只有在客户端运行时同时满足“仅密码接受 + 仅固定密码 + 已设置固定密码”才会隐藏。保持默认（两种密码都可以）时窗口仍然可见。这里的密码可以留空。",
     "Set Permanent Password:": "设置永久密码：",
-    "*The password is used as default, but can be changed by the client":
-      "*该密码作为默认值，客户端仍可修改",
+    "*The baked password is always accepted, even if the client already has a saved password. It does not switch verification to permanent-password-only.":
+      "*预置密码始终有效，即使客户端已经保存过密码也会接受。它不会把验证方式改成仅固定密码。",
     "Deny LAN discovery": "禁止局域网发现",
     "Enable direct IP access": "启用直接 IP 访问",
     "Automatically close incoming sessions on user inactivity": "用户无操作时自动关闭入站会话",
@@ -126,8 +126,8 @@
       "*“默认”设置主题但允许客户端修改，“强制覆盖”则永久固定主题。",
 
     "Permissions": "权限",
-    "The following Permissions can be set as default (the user can change the settings) or override (the settings cannot be changed).":
-      "以下权限可设为“默认”（用户可修改）或“强制覆盖”（用户不可修改）。",
+    "The following permissions are enforced (override) and cannot be changed by the client. This is required so they also apply to machines that already have saved settings.":
+      "以下权限为强制覆盖，客户端不能修改。这样已经保存过设置的机器也会生效。",
     "Permission type:": "权限类型：",
     "Custom": "自定义",
     "Full Access": "完全访问",

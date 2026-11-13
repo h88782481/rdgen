@@ -12,7 +12,7 @@ class GenerateForm(forms.Form):
     sh_secret_field = forms.CharField(required=False)
     #Platform
     platform = forms.ChoiceField(choices=[('windows','Windows 64Bit'),('windows-x86','Windows 32Bit'),('linux','Linux'),('android','Android'),('macos','macOS')], initial='windows')
-    version = forms.ChoiceField(choices=[('master','nightly'),('1.5.1','1.5.1'),('1.5.0','1.5.0')], initial='1.5.1')
+    version = forms.ChoiceField(choices=[('master','nightly'),('1.5.3','1.5.3'),('1.5.1','1.5.1'),('1.5.0','1.5.0')], initial='1.5.3')
     help_text="'master' is the development version (nightly build) with the latest features but may be less stable"
     delayFix = forms.BooleanField(initial=True, required=False)
 
@@ -71,7 +71,6 @@ class GenerateForm(forms.Form):
     autoClose = forms.BooleanField(initial=False, required=False)
 
     #Permissions
-    permissionsDorO = forms.ChoiceField(choices=[('default', 'Default'),('override', 'Override')], initial='default')
     permissionsType = forms.ChoiceField(choices=[('custom', 'Custom'),('full', 'Full Access'),('view','Screen share')], initial='custom')
     enableKeyboard =  forms.BooleanField(initial=True, required=False)
     enableClipboard = forms.BooleanField(initial=True, required=False)

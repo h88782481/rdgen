@@ -8,14 +8,13 @@ from .views import generate_custom_client, _get_run_status, _UUID_RE
 
 # Field validation constraints (mirrored from GenerateForm)
 PLATFORM_CHOICES = ['windows', 'windows-x86', 'linux', 'android', 'macos']
-VERSION_CHOICES = ['master', '1.5.1', '1.5.0']
+VERSION_CHOICES = ['master', '1.5.3', '1.5.1', '1.5.0']
 DIRECTION_CHOICES = ['incoming', 'outgoing', 'both']
 INSTALLATION_CHOICES = ['installationY', 'installationN']
 SETTINGS_CHOICES = ['settingsY', 'settingsN']
 THEME_CHOICES = ['light', 'dark', 'system']
 THEME_DORO_CHOICES = ['default', 'override']
 PASS_APPROVE_MODE_CHOICES = ['password', 'click', 'password-click']
-PERMISSIONS_DORO_CHOICES = ['default', 'override']
 PERMISSIONS_TYPE_CHOICES = ['custom', 'full', 'view']
 
 # Boolean fields
@@ -60,14 +59,16 @@ def validate_generate_params(data):
     # Choice fields
     choice_validations = {
         'platform': (PLATFORM_CHOICES, 'windows'),
-        'version': (VERSION_CHOICES, '1.5.1'),
+        'version': (VERSION_CHOICES, '1.5.3'),
         'direction': (DIRECTION_CHOICES, 'both'),
         'installation': (INSTALLATION_CHOICES, 'installationY'),
         'settings': (SETTINGS_CHOICES, 'settingsY'),
         'theme': (THEME_CHOICES, 'system'),
         'themeDorO': (THEME_DORO_CHOICES, 'default'),
         'passApproveMode': (PASS_APPROVE_MODE_CHOICES, 'password-click'),
-        'permissionsDorO': (PERMISSIONS_DORO_CHOICES, 'default'),
+        # permissionsDorO is no longer used: permissions are always written to
+        # override-settings so they apply to existing installations.  The old
+        # field is still accepted in incoming JSON and simply ignored.
         'permissionsType': (PERMISSIONS_TYPE_CHOICES, 'custom'),
     }
     for field, (choices, default) in choice_validations.items():
