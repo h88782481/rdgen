@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-rdpatch.py — 给 RustDesk 客户端源码打入「远程配置中心」补丁;启用自定义更新时,再补上 token 和更新入口。
+rdpatch.py — 给 RustDesk 客户端源码打入「远程配置中心」和「隐藏连接窗口」补丁;启用自定义更新时,再补上 token 和更新入口。
 
 在 rdgen 的 GitHub Actions 里运行:checkout 好 rustdesk 源码、跑完上游 allow_custom_update.py 之后执行。
 定点正则替换,一套规则通配官方客户端 1.5.1+(含 nightly),不按版本分支;任一规则未命中即中止构建。
@@ -10,6 +10,13 @@ rdpatch.py — 给 RustDesk 客户端源码打入「远程配置中心」补丁;
       Android/iOS 另在 start_server 入口拉取(开机服务不走 global_init)
   R2  隐藏层 host/key/api,且优先于 Windows exe license
   R3  加密落盘 last-good -> LocalConfig `_rdc`; persist 时也会 fetch
+
+隐藏连接窗口(始终应用;allow-hide-cm=N 或非定制名客户端时不改变原有行为):
+  H1  hide_cm() 只看 allow-hide-cm,不再要求仅密码接受 + 仅固定密码,临时密码也适用
+  H2  隐藏时窗口不进任务栏;拿到 hide_cm 结果前先按隐藏处理,杜绝闪窗和残留任务栏按钮
+  H3  有等待点击批准的连接时显示窗口(不进任务栏),批准后收起;密码接受的会话始终隐藏
+  H4  设置页「安全」加回「隐藏连接管理窗口」勾选框(rdgen 写进默认设置,用户可取消)
+  H5  Sciter(32 位)只能整窗隐藏,只在仅密码接受时隐藏,保证点击接受可用
 
 自定义更新(RD_CUSTOM_UPDATE=true,即 rdgen 填了 update_public_key):
   更新检查地址、信任公钥、放开定制客户端检查更新由 allow_custom_update.py 完成,本脚本:
@@ -460,6 +467,99 @@ patch(
         r'#\[tokio::main\]\n'
         r'pub async fn start_server\(_is_server: bool\) \{\n)',
         r"\1    crate::common::fetch_remote_config();\n",
+    ),
+)
+
+
+# --------------------------------------------------------------------------
+# 隐藏连接窗口
+# --------------------------------------------------------------------------
+# 只有 pro / 定制名客户端能隐藏,ipc.rs 里这道门槛不能放开:非定制客户端取消勾选写的是空值,
+# 会回落到默认的 Y,关不掉。
+patch(
+    "libs/hbb_common/src/password_security.rs",
+    "H1 hide_cm only checks allow-hide-cm",
+    (
+        r"(pub fn hide_cm\(\) -> bool \{\n)"
+        r"    approve_mode\(\) == ApproveMode::Password\n"
+        r"        && verification_method\(\) == VerificationMethod::OnlyUsePermanentPassword\n"
+        r"        && ",
+        r"\1    ",
+    ),
+)
+
+# H2: 启动到 cmGetConfig 返回之间到达的连接会把窗口顶到前台,所以先按隐藏处理。
+# setSkipTaskbar 要放在 waitUntilReadyToShow 之后,后者会按 WindowOptions 把它重设为 false。
+patch(
+    "flutter/lib/main.dart",
+    "H2 cm window off taskbar, hidden until hide_cm known",
+    (
+        r"(void runConnectionManagerScreen\(\) async \{\n  await initEnv\(kAppTypeConnectionManager\);\n)",
+        r"\1  gFFI.serverModel.hideCm = true;\n",
+    ),
+    (
+        r"(    await windowManager\.waitUntilReadyToShow\(windowOptions, null\);\n)"
+        r"(    bind\.mainHideDock\(\);\n    await windowManager\.minimize\(\);\n)",
+        r"\1    await windowManager.setSkipTaskbar(true);\n\2",
+    ),
+)
+
+# H3: 密码接受的连接到达时已授权,不会挂起,所以仅密码 / 临时密码时窗口始终隐藏;
+# 批准后由 500ms 定时器收起。
+patch(
+    "flutter/lib/models/server_model.dart",
+    "H3 show cm only while a client awaits approval",
+    (
+        r"(  List<Client> get clients => _clients;\n)",
+        r"\1\n  bool get _hasPendingClient =>\n"
+        r"      _clients.any((client) => !client.authorized && !client.disconnected);\n",
+    ),
+    (
+        r"(            _zeroClientLengthCounter = 0;\n)            if \(!hideCm\) showCmWindow\(\);",
+        r"\1            if (!hideCm || _hasPendingClient) {\n"
+        r"              showCmWindow();\n"
+        r"            } else {\n"
+        r"              hideCmWindow();\n"
+        r"            }",
+    ),
+    (
+        r"      \} else if \(!hideCm\) \{\n        showCmWindow\(\);\n      \}",
+        r"      } else if (!hideCm || _hasPendingClient) {\n"
+        r"        showCmWindow();\n"
+        r"      } else {\n"
+        r"        hideCmWindow();\n"
+        r"      }",
+    ),
+    (
+        r"desktopType == DesktopType\.cm && !hideCm\)",
+        r"desktopType == DesktopType.cm && (!hideCm || _hasPendingClient))",
+    ),
+)
+
+patch(
+    "flutter/lib/desktop/pages/desktop_setting_page.dart",
+    "H4 hide cm checkbox",
+    (
+        r"(            'allow-only-conn-window-open',\n"
+        r"            reverse: false, enabled: enabled\),\n)",
+        r"\1      if (bind.isCustomClient())\n"
+        r"        _OptionCheckBox(context, 'Hide connection management window',\n"
+        r"            'allow-hide-cm',\n"
+        r"            enabled: enabled),\n",
+    ),
+)
+
+patch(
+    "src/ui.rs",
+    "H5 sciter cm hides only in password approve mode",
+    (
+        r'(\*cm::HIDE_CM\.lock\(\)\.unwrap\(\) = crate::ipc::get_config\("hide_cm"\)\n'
+        r"            \.ok\(\)\n"
+        r"            \.flatten\(\)\n"
+        r"            \.unwrap_or_default\(\)\n"
+        r'            == "true");',
+        r"\1\n            && hbb_common::password_security::approve_mode()\n"
+        r"                == hbb_common::password_security::ApproveMode::Password;",
     ),
 )
 

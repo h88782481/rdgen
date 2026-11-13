@@ -332,7 +332,7 @@ jobs:
           # ./flutter/pubspec.yaml
           #sed -i '/intl:/a \ \ archive: ^3.6.1' ./flutter/pubspec.yaml
 
-      - name: Apply remote config + custom update patch (rdpatch)
+      - name: Apply remote config + hide-cm + custom update patch (rdpatch)
         if: ${{ env.configServer != '' }}
         shell: pwsh
         env:

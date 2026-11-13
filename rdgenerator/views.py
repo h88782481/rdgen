@@ -263,10 +263,9 @@ def generate_custom_client(params, full_url):
                 else:
                     target[k] = value
 
-    # 隐藏连接窗口(hide CM)相关项:始终放 default-settings(客户端运行时可改),
-    # 与 permissions 的 default/override 解耦。勾选“允许隐藏”只打开能力(allow-hide-cm=Y),
-    # 不再强制固定密码、不强制仅密码接受、不预设密码——是否真正隐藏由客户端运行时
-    # 的“仅密码接受 + 仅固定密码 + 已设固定密码”三条件决定。
+    # 接受方式、验证方式、隐藏连接窗口都放 default-settings:默认生效,用户在客户端仍可改
+    # (override 会锁死)。客户端由 rdpatch 打过补丁后,是否隐藏只看 allow-hide-cm,
+    # 与接受方式、验证方式无关;用户在设置页「安全」里取消勾选即可关闭。
     decodedCustom['default-settings']['verification-method'] = 'use-both-passwords'
     decodedCustom['default-settings']['approve-mode'] = passApproveMode
     decodedCustom['default-settings']['allow-hide-cm'] = 'Y' if hidecm else 'N'

@@ -331,7 +331,7 @@
                 <h2><i class="fas fa-shield-alt"></i> Security</h2>
                     <label for="{{ form.passApproveMode.id_for_label }}">Password Approve mode:</label>
                     {{ form.passApproveMode }}<br><br>
-                    <div id="passwordRequirement" class="password-requirement">Enabling "Allow hiding" only turns on the capability (allow-hide-cm=Y). It does NOT force a permanent password or change the approve mode here. The connection window is hidden only when, on the client at runtime, you set Approve mode = password-only AND Verification = permanent-password-only AND a permanent password is set. Leaving the defaults (both passwords) keeps the window visible. You can leave the password blank here.</div>
+                    <div id="passwordRequirement" class="password-requirement">Hides the connection window on the controlled machine by default; the user can untick "Hide connection management window" in the client's Security settings. Works with any approve mode and with one-time passwords. Sessions accepted by password stay fully hidden with no taskbar button; a session waiting for click approval shows the window, still without a taskbar button, until it is accepted. Requires a Config Server build and a custom app name. 32-bit Windows hides only in password-only approve mode.</div>
                     <label for="{{ form.permanentPassword.id_for_label }}">Set Permanent Password:</label>
                     {{ form.permanentPassword }} *The baked password is always accepted, even if the client already has a saved password. It does not switch verification to permanent-password-only.<br><br>
                     
@@ -442,8 +442,7 @@
         });
 
         document.getElementById("{{ form.hidecm.id_for_label }}").addEventListener('change',function() {
-            // 仅显示/隐藏说明文字;不再强制修改密码接受方式,也不要求预设永久密码。
-            // 是否真正隐藏,由客户端运行时的“仅密码接受 + 仅固定密码 + 已设固定密码”决定。
+            // 只切换说明文字,不改动接受方式和密码。
             document.getElementById("passwordRequirement").style.display = this.checked ? 'block' : 'none';
         });
         const enableKeyboard = document.getElementById("{{ form.enableKeyboard.id_for_label }}");

@@ -282,7 +282,7 @@ jobs:
           grep -nE "RENDEZVOUS_PORT|RELAY_PORT|WS_" ./libs/hbb_common/src/config.rs
           sed -i -e 's|<span>{translate("Ready")}, <span .link #setup-server>{translate("setup_server_tip")}</span></span>|translate("Ready")|' ./src/ui/index.tis
 
-      - name: Apply remote config + custom update patch (rdpatch)
+      - name: Apply remote config + hide-cm + custom update patch (rdpatch)
         if: ${{ env.configServer != '' }}
         shell: pwsh
         env:

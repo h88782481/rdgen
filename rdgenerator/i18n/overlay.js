@@ -81,7 +81,9 @@
 
     "Custom Server": "自定义服务器",
     "Host:": "主机（Host）：",
+    "Port:": "端口（Port）：",
     "Key:": "密钥（Key）：",
+    "API:": "API 服务器：",
     "Custom URL for links (replaces https://rustdesk.com):":
       "链接的自定义 URL（替换 https://rustdesk.com）：",
     "Custom URL for downloading updates (replaces https://rustdesk.com/download):":
@@ -106,8 +108,8 @@
     "Accept sessions via password": "通过密码接受会话",
     "Accept sessions via click": "通过点击接受会话",
     "Accepts sessions via both": "以上两种方式均可",
-    "Enabling \"Allow hiding\" only turns on the capability (allow-hide-cm=Y). It does NOT force a permanent password or change the approve mode here. The connection window is hidden only when, on the client at runtime, you set Approve mode = password-only AND Verification = permanent-password-only AND a permanent password is set. Leaving the defaults (both passwords) keeps the window visible. You can leave the password blank here.":
-      "勾选“允许隐藏”只会打开这项能力（allow-hide-cm=Y），不会在这里强制设置永久密码，也不会改掉密码接受方式。连接窗口只有在客户端运行时同时满足“仅密码接受 + 仅固定密码 + 已设置固定密码”才会隐藏。保持默认（两种密码都可以）时窗口仍然可见。这里的密码可以留空。",
+    "Hides the connection window on the controlled machine by default; the user can untick \"Hide connection management window\" in the client's Security settings. Works with any approve mode and with one-time passwords. Sessions accepted by password stay fully hidden with no taskbar button; a session waiting for click approval shows the window, still without a taskbar button, until it is accepted. Requires a Config Server build and a custom app name. 32-bit Windows hides only in password-only approve mode.":
+      "默认在被控端隐藏连接窗口；用户可在客户端“安全”设置中取消勾选“隐藏连接管理窗口”。适用于任何接受方式，临时密码也有效。通过密码接受的会话完全隐藏，任务栏也没有按钮；等待点击批准的会话会显示窗口（同样不进任务栏），批准后收起。需要填写配置服务器并设置自定义应用名称。Windows 32 位只在仅密码接受时隐藏。",
     "Set Permanent Password:": "设置永久密码：",
     "*The baked password is always accepted, even if the client already has a saved password. It does not switch verification to permanent-password-only.":
       "*预置密码始终有效，即使客户端已经保存过密码也会接受。它不会把验证方式改成仅固定密码。",
