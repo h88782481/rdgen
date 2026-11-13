@@ -27,7 +27,7 @@ rdpatch.py — 给 RustDesk 客户端源码打入「远程配置中心」和「�
   U3  浏览器下载按钮 -> <server>/download/<platform>
 
 配置来自环境变量:
-  RD_CONFIG_SERVER   自建服务器地址,例如 https://cfg.example.com  (必填)
+  RD_CONFIG_SERVER   自建服务器地址,例如 https://cfg.example.com 或 https://cfg.example.com:8443  (必填)
   RD_CONFIG_TOKEN    客户端接口 Bearer token                        (必填)
   RD_CUSTOM_UPDATE   为 true 时应用 U0-U3
 
@@ -568,10 +568,26 @@ patch(
 # 自定义更新
 # --------------------------------------------------------------------------
 if CUSTOM_UPDATE:
-    # U0: 客户端只接受 https、不带端口的更新地址,并按它校验清单里的安装包地址。
+    # U0: https://小写域名[:端口],不能有用户信息、路径或查询参数。
+    # allow_custom_update 已去掉客户端对端口的限制。配置服务按 Host 头生成清单地址,
+    # 非 443 时 Host 含端口,所以这里写的端口必须和对外访问端口一致。
     url = urlparse(SERVER)
-    if url.scheme != "https" or url.netloc != url.hostname or url.path or url.query or url.fragment:
-        print(f"[FAIL] U0 RD_CONFIG_SERVER must be https://<lowercase domain> without port or path: {SERVER}")
+    try:
+        host, port = url.hostname, url.port
+    except ValueError:
+        host, port = None, None
+    origin = f"{host}:{port}" if port else host
+    if (
+        url.scheme != "https"
+        or not host
+        or url.username
+        or url.password
+        or url.netloc != origin
+        or url.path
+        or url.query
+        or url.fragment
+    ):
+        print(f"[FAIL] U0 RD_CONFIG_SERVER must be https://<lowercase domain>[:port] with no path: {SERVER}")
         failed.append("U0 config server url")
     verify(
         "libs/hbb_common/src/lib.rs",

@@ -92,10 +92,10 @@
       "版权公司名称（替换 Purslane Tech Pte. Ltd.）：",
 
     "Remote Config Center (optional)": "远程配置中心（可选）",
-    "Point to your self-hosted rustdesk-config-server (RustDesk 1.5.1+). When set, the client fetches host/key/api from this service on startup. Fill in the Update Public Key to also get signed in-app updates from it; this requires a Config Server URL of the form https://domain (port 443, no path). Leave blank to disable.":
-      "指向你自建的 rustdesk-config-server（RustDesk 1.5.1 及以后）。填写后，客户端会在启动时从该服务拉取 host/key/api。再填上更新公钥，还会通过它进行签名的应用内更新，此时配置服务器 URL 必须是 https://域名（443 端口、不带路径）。留空则不启用。",
-    "Config Server URL (e.g. https://cfg.example.com):":
-      "配置服务器 URL（例如 https://cfg.example.com）：",
+    "Point to your self-hosted rustdesk-config-server (RustDesk 1.5.1+). When set, the client fetches host/key/api from this service on startup. Fill in the Update Public Key to also get signed in-app updates from it. The URL must be https://domain or https://domain:port, with no path. Leave blank to disable.":
+      "指向你自建的 rustdesk-config-server（RustDesk 1.5.1 及以后）。填写后，客户端会在启动时从该服务拉取 host/key/api。再填上更新公钥，还会通过它进行签名的应用内更新。此时配置服务器 URL 必须是 https://域名，或 https://域名:端口，不能带路径。留空则不启用。",
+    "Config Server URL (e.g. https://cfg.example.com or https://cfg.example.com:8443):":
+      "配置服务器 URL（例如 https://cfg.example.com，或 https://cfg.example.com:8443）：",
     "Config Server Token (must match CLIENT_TOKEN):":
       "配置服务器 Token（必须与 CLIENT_TOKEN 一致）：",
     "Update Public Key (copy from the config server panel):":
