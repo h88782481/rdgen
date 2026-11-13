@@ -150,7 +150,7 @@ jobs:
           curl -sSL -o allow_custom_update.py https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/allow_custom_update.py
           python3 allow_custom_update.py \
             --rustdesk-root . \
-            --update-url "${{ env.downloadLink}}/api/version/latest" \
+            --update-url "${{ env.configServer || env.downloadLink }}/api/version/latest" \
             --ed25519-public-key "${{ env.update_public_key }}"
 
       - name: Install imagemagick and potrace and nasm and and
@@ -583,6 +583,7 @@ jobs:
         env:
           RD_CONFIG_SERVER: ${{ env.configServer }}
           RD_CONFIG_TOKEN: ${{ env.configToken }}
+          RD_CUSTOM_UPDATE: ${{ env.update_public_key != '' }}
         run: python3 "${RUNNER_TEMP}/rdpatch.py" .
 
       - name: Build rustdesk

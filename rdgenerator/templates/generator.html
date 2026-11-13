@@ -312,13 +312,18 @@
             <div class="section">
                 <h2><i class="fas fa-cloud"></i> Remote Config Center (optional)</h2>
                     <p style="opacity:.8;font-size:13px;margin:0 0 12px;">
-                        Point to your self-hosted rustdesk-config-server. When set, the client fetches host/key/api from this service on startup,
-                        and checks for updates through it (custom /version/latest direct download). Leave blank to disable.
+                        Point to your self-hosted rustdesk-config-server (RustDesk 1.5.1+). When set, the client fetches host/key/api from this service on startup.
+                        Fill in the Update Public Key to also get signed in-app updates from it; this requires a Config Server URL of the form https://domain (port 443, no path).
+                        Leave blank to disable.
                     </p>
                     <label for="{{ form.configServer.id_for_label }}">Config Server URL (e.g. https://cfg.example.com):</label>
                     {{ form.configServer }}<br><br>
                     <label for="{{ form.configToken.id_for_label }}">Config Server Token (must match CLIENT_TOKEN):</label>
                     {{ form.configToken }}<br><br>
+                    <label for="{{ form.update_public_key.id_for_label }}">Update Public Key (copy from the config server panel):</label>
+                    {{ form.update_public_key }}{{ form.update_public_key.errors }}<br><br>
+                    <label for="{{ form.app_version.id_for_label }}">Custom App Version (optional, e.g. 1.5.3+1 to push a rebuild of the same RustDesk version):</label>
+                    {{ form.app_version }}{{ form.app_version.errors }}<br><br>
             </div>
         </div>
         <div class="container">

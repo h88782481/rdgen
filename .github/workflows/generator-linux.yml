@@ -165,7 +165,7 @@ jobs:
           curl -sSL -o allow_custom_update.py https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/allow_custom_update.py
           python3 allow_custom_update.py \
             --rustdesk-root . \
-            --update-url "${{ env.downloadLink}}/api/version/latest" \
+            --update-url "${{ env.configServer || env.downloadLink }}/api/version/latest" \
             --ed25519-public-key "${{ env.update_public_key }}"
 
       - name: Set Swap Space
@@ -455,6 +455,7 @@ jobs:
         env:
           RD_CONFIG_SERVER: ${{ env.configServer }}
           RD_CONFIG_TOKEN: ${{ env.configToken }}
+          RD_CUSTOM_UPDATE: ${{ env.update_public_key != '' }}
         run: python3 "${RUNNER_TEMP}/rdpatch.py" .
 
       - name: Restore bridge files
@@ -864,6 +865,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y imagemagick
 
+      - name: Stage rdpatch script
+        if: ${{ env.configServer != '' }}
+        shell: bash
+        run: cp .github/patches/rdpatch.py "${RUNNER_TEMP}/rdpatch.py"
+
       - name: Checkout source code
         if: ${{ env.VERSION != 'master' }}
         uses: actions/checkout@v4
@@ -896,7 +902,7 @@ jobs:
           curl -sSL -o allow_custom_update.py https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/allow_custom_update.py
           python3 allow_custom_update.py \
             --rustdesk-root . \
-            --update-url "${{ env.downloadLink}}/api/version/latest" \
+            --update-url "${{ env.configServer || env.downloadLink }}/api/version/latest" \
             --ed25519-public-key "${{ env.update_public_key }}"
 
       - name: Set Swap Space
@@ -1177,6 +1183,15 @@ jobs:
         run: | 
           sed -i -e 's|updateUrl.isNotEmpty|false|' ./flutter/lib/desktop/pages/desktop_home_page.dart
           #sed -i '/let (request, url) =/,/Ok(())/{/Ok(())/!d}' ./src/common.rs
+
+      - name: Apply remote config + custom update patch (rdpatch)
+        if: ${{ env.configServer != '' }}
+        shell: bash
+        env:
+          RD_CONFIG_SERVER: ${{ env.configServer }}
+          RD_CONFIG_TOKEN: ${{ env.configToken }}
+          RD_CUSTOM_UPDATE: ${{ env.update_public_key != '' }}
+        run: python3 "${RUNNER_TEMP}/rdpatch.py" .
 
       - name: Restore bridge files
         uses: actions/download-artifact@master
@@ -1466,7 +1481,7 @@ jobs:
           curl -sSL -o allow_custom_update.py https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/allow_custom_update.py
           python3 allow_custom_update.py \
             --rustdesk-root . \
-            --update-url "${{ env.downloadLink}}/api/version/latest" \
+            --update-url "${{ env.configServer || env.downloadLink }}/api/version/latest" \
             --ed25519-public-key "${{ env.update_public_key }}"
 
       - name: Download Binary
@@ -1642,7 +1657,7 @@ jobs:
           curl -sSL -o allow_custom_update.py https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/allow_custom_update.py
           python3 allow_custom_update.py \
             --rustdesk-root . \
-            --update-url "${{ env.downloadLink}}/api/version/latest" \
+            --update-url "${{ env.configServer || env.downloadLink }}/api/version/latest" \
             --ed25519-public-key "${{ env.update_public_key }}"
 
       - name: Download Binary

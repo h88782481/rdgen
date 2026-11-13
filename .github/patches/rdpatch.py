@@ -1,138 +1,100 @@
 #!/usr/bin/env python3
 """
-rdpatch.py — 给 RustDesk 客户端源码打入「远程配置中心 + 自定义更新服务器」补丁。
+rdpatch.py — 给 RustDesk 客户端源码打入「远程配置中心」补丁;启用自定义更新时,再补上 token 和更新入口。
 
-在 rdgen 的 GitHub Actions 里,checkout 好 rustdesk 源码后运行本脚本。
-定点正则替换,一套规则通配官方客户端 **1.4.0–1.5.x**(含 nightly),不按版本分支。
+在 rdgen 的 GitHub Actions 里运行:checkout 好 rustdesk 源码、跑完上游 allow_custom_update.py 之后执行。
+定点正则替换,一套规则通配官方客户端 1.5.1+(含 nightly),不按版本分支;任一规则未命中即中止构建。
 
-  P1  版本检查 URL      -> 指向自建服务器 /version/latest        (hbb_common/src/lib.rs)
-  P2  版本检查带 token   -> Authorization: Bearer <token>          (src/common.rs)
-  P3  解析 version 字段  -> 用 serde_json::Value 读 url + version;
-      1.5.1+ 的 GitHub release URL 校验一并替换                  (src/common.rs)
-  P4  更新跳转浏览器     -> 所有平台都打开服务器返回的下载链接,不走内置下载/安装
-      P4a Flutter 桌面; P4b Android; P4c Sciter
-  P5  启动拉取 + 后台刷新 -> fetch_remote_config(): global_init;
-      Android/iOS 另在 start_server 入口初始化(开机服务不走 global_init)
-  P6  放开 custom 限制   -> 定制客户端也检查/提示更新
-  P7  隐藏层 host/key/api,且优先于 Windows exe license
-  P8  加密落盘 last-good -> LocalConfig `_rdc`; persist 时也会 fetch
-  P9  关闭静默自动更新   -> Windows/macOS 后台不再自动安装,并隐藏「自动更新」开关
+远程配置(始终应用):
+  R1  启动拉取 + 后台刷新 -> fetch_remote_config(): global_init;
+      Android/iOS 另在 start_server 入口拉取(开机服务不走 global_init)
+  R2  隐藏层 host/key/api,且优先于 Windows exe license
+  R3  加密落盘 last-good -> LocalConfig `_rdc`; persist 时也会 fetch
+
+自定义更新(RD_CUSTOM_UPDATE=true,即 rdgen 填了 update_public_key):
+  更新检查地址、信任公钥、放开定制客户端检查更新由 allow_custom_update.py 完成,本脚本:
+  U0  校验 Config Server 地址可用于更新,且 allow_custom_update.py 每处改动都已生效
+      (它所在的 workflow 步骤 continue-on-error,失败不会中断构建)
+  U1  版本检查、签名清单、安装包下载都带 Authorization: Bearer <token>
+  U2  Flutter 定制客户端也显示更新提示(桌面首页卡片、Android 更新条)
+  U3  浏览器下载按钮 -> <server>/download/<platform>
 
 配置来自环境变量:
   RD_CONFIG_SERVER   自建服务器地址,例如 https://cfg.example.com  (必填)
   RD_CONFIG_TOKEN    客户端接口 Bearer token                        (必填)
+  RD_CUSTOM_UPDATE   为 true 时应用 U0-U3
 
 用法:
-  RD_CONFIG_SERVER=https://cfg.example.com RD_CONFIG_TOKEN=xxx python rdpatch.py [rustdesk_root]
+  RD_CONFIG_SERVER=https://cfg.example.com RD_CONFIG_TOKEN=xxx RD_CUSTOM_UPDATE=true python rdpatch.py [rustdesk_root]
 """
 import os
 import re
 import sys
+from urllib.parse import urlparse
 
 ROOT = sys.argv[1] if len(sys.argv) > 1 else "."
 SERVER = os.environ.get("RD_CONFIG_SERVER", "").rstrip("/")
 TOKEN = os.environ.get("RD_CONFIG_TOKEN", "")
+CUSTOM_UPDATE = os.environ.get("RD_CUSTOM_UPDATE") == "true"
 
-results = []  # (name, ok, critical)
+if not SERVER or not TOKEN:
+    print("ERROR: RD_CONFIG_SERVER / RD_CONFIG_TOKEN must be set")
+    sys.exit(2)
+
+failed = []
 
 
-def _p(root, *parts):
-    return os.path.join(root, *parts)
+def path_of(rel):
+    return os.path.join(ROOT, *rel.split("/"))
 
 
-def patch_file(rel, name, transform, critical=False):
-    """读取文件 -> transform(text)->(new_text, changed) -> 写回。"""
-    path = _p(ROOT, *rel.split("/"))
-    if not os.path.isfile(path):
-        print(f"[MISS] {name}: file not found -> {path}")
-        results.append((name, False, critical))
-        return
-    with open(path, "r", encoding="utf-8") as f:
-        text = f.read()
+def read(rel):
+    with open(path_of(rel), encoding="utf-8") as f:
+        return f.read()
+
+
+def patch(rel, name, *rules, append=""):
+    """依次应用 (pattern, repl) 规则,每条至少命中一次;append 追加到文件末尾。"""
     try:
-        new_text, changed = transform(text)
-    except Exception as e:  # noqa: BLE001
-        print(f"[FAIL] {name}: {e}")
-        results.append((name, False, critical))
+        text = read(rel)
+        for pattern, repl in rules:
+            text, n = re.subn(pattern, repl, text)
+            if not n:
+                raise ValueError(f"pattern not found: {pattern[:80]}")
+    except (OSError, ValueError) as e:
+        print(f"[FAIL] {name} -> {rel}: {e}")
+        failed.append(name)
         return
-    if not changed:
-        print(f"[SKIP] {name}: pattern not found (maybe already patched) -> {rel}")
-        results.append((name, False, critical))
-        return
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(new_text)
+    with open(path_of(rel), "w", encoding="utf-8") as f:
+        f.write(text + append)
     print(f"[ OK ] {name} -> {rel}")
-    results.append((name, True, critical))
 
 
-def sub_once(pattern, repl, text, flags=0):
-    new_text, n = re.subn(pattern, repl, text, count=1, flags=flags)
-    return new_text, n > 0
-
-
-# --------------------------------------------------------------------------
-# P1: 版本检查 URL(hbb_common,submodule 已 recursive checkout)
-# --------------------------------------------------------------------------
-def p1(text):
-    return sub_once(
-        r'const URL: &str = "https://api\.rustdesk\.com/version/latest";',
-        f'const URL: &str = "{SERVER}/version/latest";',
-        text,
-    )
-
-
-patch_file("libs/hbb_common/src/lib.rs", "P1 version-check URL", p1, critical=True)
+def verify(rel, name, present=(), absent=()):
+    """校验文件里应出现 / 不应再出现的片段。"""
+    try:
+        text = read(rel)
+    except OSError as e:
+        print(f"[FAIL] {name} -> {rel}: {e}")
+        failed.append(name)
+        return
+    problems = [f"missing {s!r}" for s in present if s not in text]
+    problems += [f"unexpected {s!r}" for s in absent if s in text]
+    if problems:
+        print(f"[FAIL] {name} -> {rel}: {'; '.join(problems)}")
+        failed.append(name)
+    else:
+        print(f"[ OK ] {name} -> {rel}")
 
 
 # --------------------------------------------------------------------------
-# src/common.rs: P2 + P3 + P5 + P6(部分)+ 注入常量与函数
+# 远程配置
 # --------------------------------------------------------------------------
-def common_rs(text):
-    changed_any = False
-
-    # P2: version 检查请求加 Authorization。
-    # 1.4.0-1.4.3 一处 .post(url); 1.4.4+ 两处 .post(&url)(TLS retry)。
-    text2, c = re.subn(
-        r'\.post\(&?url\)\s*\.json\(&request\)',
-        '.post(&url).header("Authorization", format!("Bearer {}", REMOTE_CONFIG_TOKEN)).json(&request)',
-        text,
-    )
-    if c:
-        text = text2
-        changed_any = True
-        print(f"       P2 auth header applied to {c} request(s)")
-
-    # P3: 用 serde_json::Value 解析 url + version。
-    # 1.4.x-1.5.0 从 url 末段取版本; 1.5.1+ 还要求 url 是 GitHub release 页,一并替换。
-    text, c = sub_once(
-        r'let resp: hbb_common::VersionCheckResponse = serde_json::from_slice\(&bytes\)\?;\s*'
-        r'let response_url = resp\.url;.*?let latest_release_version = [^;]*;',
-        "let resp: serde_json::Value = serde_json::from_slice(&bytes)?;\n"
-        '    let response_url = resp.get("url").and_then(|v| v.as_str()).unwrap_or_default().to_string();\n'
-        '    let latest_release_version = resp.get("version").and_then(|v| v.as_str()).unwrap_or_default().to_string();',
-        text,
-        flags=re.DOTALL,
-    )
-    changed_any = changed_any or c
-
-    # P5: global_init 里注入配置拉取
-    text, c = sub_once(
-        r'pub fn global_init\(\) -> bool \{\n',
-        "pub fn global_init() -> bool {\n    fetch_remote_config();\n",
-        text,
-    )
-    changed_any = changed_any or c
-
-    # P6a: check_software_update 去掉 custom client 提前 return
-    text, c = sub_once(
-        r'pub fn check_software_update\(\) \{\n\s*if is_custom_client\(\) \{\n\s*return;\n\s*\}\n',
-        "pub fn check_software_update() {\n",
-        text,
-    )
-    changed_any = changed_any or c
-
-    # P7a: key 隐藏层 —— get_key 在 option("key") 为空时读下发的 key(不写 option,故界面不显示)
-    text, c = sub_once(
+# R2: 隐藏层 —— 下发的 key/api 只放在内存全局量里(不写 option,设置页不显示),
+# 下发的 host/key/api 都优先于 Windows exe 文件名里的 license。
+R2 = [
+    # get_key: option("key") 为空时读下发的 key
+    (
         r'    if key\.is_empty\(\) \{\n        key = config::RS_PUB_KEY\.to_owned\(\);\n    \}',
         "    if key.is_empty() {\n"
         "        let k = REMOTE_CFG_KEY.read().unwrap().clone();\n"
@@ -143,12 +105,9 @@ def common_rs(text):
         "    if key.is_empty() {\n"
         "        key = config::RS_PUB_KEY.to_owned();\n"
         "    }",
-        text,
-    )
-    changed_any = changed_any or c
-
-    # P7b: api 隐藏层 —— get_api_server_ 在 api(option) 为空时读下发的 api(不写 option,故不显示)
-    text, c = sub_once(
+    ),
+    # get_api_server_: api option 为空时读下发的 api
+    (
         r'    if !api\.is_empty\(\) \{\n        return api\.to_owned\(\);\n    \}',
         "    if !api.is_empty() {\n"
         "        return api.to_owned();\n"
@@ -159,12 +118,9 @@ def common_rs(text):
         "            return a;\n"
         "        }\n"
         "    }",
-        text,
-    )
-    changed_any = changed_any or c
-
-    # P7c: remote host 优先于 Windows exe 文件名里的 license host=
-    text, c = sub_once(
+    ),
+    # get_custom_rendezvous_server: 下发 host 优先于 license host=
+    (
         r'pub fn get_custom_rendezvous_server\(custom: String\) -> String \{\n'
         r'    #\[cfg\(windows\)\]\n'
         r'    if let Ok\(lic\) = crate::platform::windows::get_license_from_exe_name\(\) \{\n'
@@ -195,12 +151,9 @@ def common_rs(text):
         "    }\n"
         "    \"\".to_owned()\n"
         "}",
-        text,
-    )
-    changed_any = changed_any or c
-
-    # P7d: get_rendezvous_server 里 Windows license 不得盖掉已下发的 host
-    text, c = sub_once(
+    ),
+    # get_rendezvous_server: license 不得盖掉已下发的 host
+    (
         r'    #\[cfg\(windows\)\]\n'
         r'    if let Ok\(lic\) = crate::platform::get_license_from_exe_name\(\) \{\n'
         r'        if !lic\.host\.is_empty\(\) \{\n'
@@ -218,12 +171,9 @@ def common_rs(text):
         "            }\n"
         "        }\n"
         "    }",
-        text,
-    )
-    changed_any = changed_any or c
-
-    # P7e: get_key 下发 key 优先于 Windows license / option
-    text, c = sub_once(
+    ),
+    # get_key: 下发 key 优先于 license / option
+    (
         r'pub async fn get_key\(sync: bool\) -> String \{\n'
         r'    #\[cfg\(windows\)\]\n'
         r'    if let Ok\(lic\) = crate::platform::windows::get_license_from_exe_name\(\) \{\n'
@@ -244,12 +194,9 @@ def common_rs(text):
         "            return lic.key;\n"
         "        }\n"
         "    }",
-        text,
-    )
-    changed_any = changed_any or c
-
-    # P7f: get_api_server_ 下发 api 优先于 Windows license
-    text, c = sub_once(
+    ),
+    # get_api_server_: 下发 api 优先于 license
+    (
         r'fn get_api_server_\(api: String, custom: String\) -> String \{\n'
         r'    #\[cfg\(windows\)\]\n'
         r'    if let Ok\(lic\) = crate::platform::windows::get_license_from_exe_name\(\) \{\n'
@@ -270,37 +217,32 @@ def common_rs(text):
         "            return lic.api.clone();\n"
         "        }\n"
         "    }",
-        text,
-    )
-    changed_any = changed_any or c
+    ),
+]
 
-    # P8: load_custom_client 结束后把 last-good 写到正确的 APP_NAME 配置目录
-    text, c = sub_once(
+# R3: load_custom_client 结束后把 last-good 写到正确的 APP_NAME 配置目录
+R3 = [
+    (
         r'        read_custom_client\(data\.trim\(\)\);\n        return;',
         "        read_custom_client(data.trim());\n"
         "        persist_remote_config_after_custom_client();\n"
         "        return;",
-        text,
-    )
-    changed_any = changed_any or c
-
-    text, c = sub_once(
+    ),
+    (
         r'        read_custom_client\(&data\.trim\(\)\);\n    \}\n\}',
         "        read_custom_client(&data.trim());\n"
         "    }\n"
         "    persist_remote_config_after_custom_client();\n"
         "}",
-        text,
-    )
-    changed_any = changed_any or c
+    ),
+]
 
-    # 注入常量 + fetch_remote_config()(追加到文件末尾)
-    if "REMOTE_CONFIG_SERVER" not in text:
-        text += f'''
+REMOTE_CONFIG_BLOCK = f'''
 
 // ==== injected by rdpatch.py: remote config center ====
 pub const REMOTE_CONFIG_SERVER: &str = "{SERVER}";
 pub const REMOTE_CONFIG_TOKEN: &str = "{TOKEN}";
+pub const REMOTE_CONFIG_AUTH: &str = "Bearer {TOKEN}";
 
 const REMOTE_CFG_CACHE_KEY: &str = "_rdc";
 const REMOTE_CFG_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
@@ -429,7 +371,7 @@ fn save_cached_remote_config() {{
 }}
 
 fn persist_remote_config_after_custom_client() {{
-    // Android 1.4.4+ Flutter initialize: load_custom_client runs BEFORE
+    // Android Flutter initialize: load_custom_client runs BEFORE
     // global_init / test_rendezvous. Fetch here so host/key/api are ready.
     fetch_remote_config();
     if REMOTE_CFG_FETCH_OK.load(std::sync::atomic::Ordering::SeqCst) {{
@@ -453,7 +395,7 @@ fn try_fetch_remote_config() -> bool {{
     }};
     let resp = match client
         .get(&url)
-        .header("Authorization", format!("Bearer {{}}", REMOTE_CONFIG_TOKEN))
+        .header("Authorization", REMOTE_CONFIG_AUTH)
         .send()
     {{
         Ok(r) => r,
@@ -498,184 +440,114 @@ fn do_fetch_remote_config() {{
     log::warn!("remote config: http failed and no cache, using compile-time defaults");
 }}
 '''
-        changed_any = True
 
-    return text, changed_any
-
-
-patch_file("src/common.rs", "P2/P3/P5/P6 common.rs", common_rs, critical=True)
-
-
-# --------------------------------------------------------------------------
-# P6b: Flutter 放开 custom client 更新提示
-# --------------------------------------------------------------------------
-def common_dart(text):
-    return sub_once(
-        r'if \(!isWeb\) \{\n\s*if \(!bind\.isCustomClient\(\)\) \{',
-        "if (!isWeb) {\n    if (true) {",
-        text,
-    )
-
-
-patch_file("flutter/lib/common.dart", "P6b checkUpdate guard (flutter)", common_dart)
-
-
-# --------------------------------------------------------------------------
-# P4a / P6c: Flutter 桌面更新卡片整段替换 —— 定制客户端也显示,所有平台都用浏览器
-# 打开服务器返回的链接(原版 Windows/macOS 已安装时走内置下载安装)。
-# --------------------------------------------------------------------------
-def desktop_home_dart(text):
-    return sub_once(
-        r"if \(!bind\.isCustomClient\(\) &&\s*updateUrl\.isNotEmpty &&.*?\);\n    \}",
-        "if (updateUrl.isNotEmpty && !isCardClosed) {\n"
-        "      return buildInstallCard(\n"
-        '          "Status",\n'
-        '          "${translate("new-version-of-{${bind.mainGetAppNameSync()}}-tip")} (${bind.mainGetNewVersion()}).",\n'
-        "          'Download',\n"
-        "          () => launchUrl(Uri.parse(updateUrl)),\n"
-        "          closeButton: true);\n"
-        "    }",
-        text,
-        flags=re.DOTALL,
-    )
-
-
-patch_file(
-    "flutter/lib/desktop/pages/desktop_home_page.dart",
-    "P4a/P6c update card -> browser (flutter desktop)",
-    desktop_home_dart,
-    critical=True,
+patch(
+    "src/common.rs",
+    "R1-R3 remote config",
+    (r"pub fn global_init\(\) -> bool \{\n", "pub fn global_init() -> bool {\n    fetch_remote_config();\n"),
+    *R2,
+    *R3,
+    append=REMOTE_CONFIG_BLOCK,
 )
 
-
-def connection_page_dart(text):
-    changed_any = False
-    text, c = sub_once(
-        r'if \(!bind\.isCustomClient\(\) && !isIOS\)',
-        "if (!isIOS)",
-        text,
-    )
-    changed_any = changed_any or c
-    # P4b: Android 更新条打开服务器返回的链接(rdgen 可能已把 rustdesk.com/download 换成自定义地址)
-    text, c = sub_once(
-        r"final url = '[^']*';",
-        "final url = updateUrl;",
-        text,
-    )
-    changed_any = changed_any or c
-    return text, changed_any
-
-
-patch_file(
-    "flutter/lib/mobile/pages/connection_page.dart",
-    "P6d/P4b mobile update card -> browser",
-    connection_page_dart,
-    critical=True,
-)
-
-
-# --------------------------------------------------------------------------
-# P4c / P6e / P9: Sciter (windows-x86) 打开服务器返回的链接 + 定制客户端也显示
-# 下载按钮 + 去掉「自动更新」菜单项
-# --------------------------------------------------------------------------
-def index_tis(text):
-    changed_any = False
-    text, c = sub_once(
-        r'(event click \$\(#install-me\) \{\s*)handler\.open_url\("[^"]*"\);',
-        r"\1handler.open_url(software_update_url);",
-        text,
-    )
-    changed_any = changed_any or c
-    # 1.4.6+ hides the click target for custom clients
-    text, c = sub_once(
-        r"\{is_custom_client\s*\n"
-        r"\s*\? <div style=.*?"
-        r"<div #install-me\.link>\{translate\('Click to ' \+ update_or_download\)\}</div>\}",
-        "<div #install-me.link>{translate('Click to ' + update_or_download)}</div>",
-        text,
-        flags=re.DOTALL,
-    )
-    changed_any = changed_any or c
-    text, c = sub_once(r'\n[^\n]*<li #allow-auto-update>[^\n]*', "", text)
-    changed_any = changed_any or c
-    return text, changed_any
-
-
-patch_file("src/ui/index.tis", "P4c/P6e/P9 Sciter update -> browser", index_tis)
-
-
-# --------------------------------------------------------------------------
-# P9: 关闭静默自动更新 —— 更新统一由用户在浏览器下载安装。
-# allow-auto-update 判断恒为 false: Windows check_update 与 macOS check_update_as_root(1.5+)
-# 都直接返回。手动检查(manually)无调用方,不受影响。
-# --------------------------------------------------------------------------
-def updater_rs(text):
-    text, n = re.subn(
-        r'config::Config::get_bool_option\((?:config::)?keys::OPTION_ALLOW_AUTO_UPDATE\)',
-        "false",
-        text,
-    )
-    return text, n > 0
-
-
-patch_file("src/updater.rs", "P9 disable silent auto-update", updater_rs, critical=True)
-
-
-def desktop_setting_dart(text):
-    return sub_once(
-        r'final showAutoUpdate =[^;]*;',
-        "final showAutoUpdate = false;",
-        text,
-    )
-
-
-patch_file(
-    "flutter/lib/desktop/pages/desktop_setting_page.dart",
-    "P9 hide auto-update option (flutter)",
-    desktop_setting_dart,
-)
-
-
-# --------------------------------------------------------------------------
-# P5: Android/iOS start_server 入口拉配置。开机 MainService 只走这里,不经过
-# global_init / Flutter initialize。桌面 start_server 签名不同,不会误打。
-# 1.5.1+ 函数体多了 trusted_devices 初始化,故只锚定签名、插在函数体最前。
-# --------------------------------------------------------------------------
-def server_rs(text):
-    return sub_once(
+# R1: Android/iOS start_server 入口拉配置。开机 MainService 只走这里,不经过 global_init / Flutter initialize。
+# 桌面 start_server 签名不同,不会误打;函数体随版本增减,故只锚定签名、插在函数体最前。
+patch(
+    "src/server.rs",
+    "R1 Android/iOS start_server fetch",
+    (
         r'(#\[cfg\(any\(target_os = "android", target_os = "ios"\)\)\]\n'
         r'#\[tokio::main\]\n'
         r'pub async fn start_server\(_is_server: bool\) \{\n)',
         r"\1    crate::common::fetch_remote_config();\n",
-        text,
-    )
-
-
-patch_file(
-    "src/server.rs",
-    "P5 Android/iOS start_server fetch",
-    server_rs,
-    critical=True,
+    ),
 )
 
 
 # --------------------------------------------------------------------------
-# summary
+# 自定义更新
 # --------------------------------------------------------------------------
-print("\n===== rdpatch summary =====")
-crit_fail = False
-for name, ok, critical in results:
-    tag = "OK " if ok else ("CRIT-FAIL" if critical else "warn")
-    print(f"  [{tag}] {name}")
-    if critical and not ok:
-        crit_fail = True
+if CUSTOM_UPDATE:
+    # U0: 客户端只接受 https、不带端口的更新地址,并按它校验清单里的安装包地址。
+    url = urlparse(SERVER)
+    if url.scheme != "https" or url.netloc != url.hostname or url.path or url.query or url.fragment:
+        print(f"[FAIL] U0 RD_CONFIG_SERVER must be https://<lowercase domain> without port or path: {SERVER}")
+        failed.append("U0 config server url")
+    verify(
+        "libs/hbb_common/src/lib.rs",
+        "U0 allow_custom_update: update url, build number",
+        present=[f'"{SERVER}/api/version/latest"', "v.split_once('+')"],
+    )
+    verify(
+        "src/common.rs",
+        "U0 allow_custom_update: custom client check, release url",
+        present=["display_version.split_once('+')"],
+        absent=[
+            "pub fn check_software_update() {\n    if is_custom_client() {",
+            'url.host_str() != Some("github.com")',
+        ],
+    )
+    verify(
+        "src/updater/artifact.rs",
+        "U0 allow_custom_update: artifact url",
+        present=[f'format!("{SERVER}/rustdesk/rustdesk/releases/download/{{release_id}}/")'],
+        absent=['parsed.host_str() != Some("github.com")'],
+    )
+    verify(
+        "src/update_metadata.rs",
+        "U0 allow_custom_update: trusted key",
+        present=['key_id: "custom-update"'],
+    )
 
-if not SERVER or not TOKEN:
-    print("\nERROR: RD_CONFIG_SERVER / RD_CONFIG_TOKEN must be set")
-    sys.exit(2)
+    # U1: 版本检查(Rustls 与 NativeTls 重试两处)、签名清单、安装包下载都带 token
+    AUTH = '.header("Authorization", crate::common::REMOTE_CONFIG_AUTH)'
+    patch(
+        "src/common.rs",
+        "U1 version check token",
+        (r"\.post\(&url\)\s*\.json\(&request\)", f".post(&url){AUTH}.json(&request)"),
+    )
+    patch(
+        "src/updater/artifact.rs",
+        "U1 update metadata token",
+        (
+            r"\.get\(url\)(\s*)\.timeout\(UPDATE_SIDECAR_HTTP_REQUEST_TIMEOUT\)",
+            rf".get(url)\1{AUTH}\1.timeout(UPDATE_SIDECAR_HTTP_REQUEST_TIMEOUT)",
+        ),
+    )
+    patch(
+        "src/updater/download.rs",
+        "U1 update package token",
+        (r"client\.get\(download_url\)\.send\(\)", f"client.get(download_url){AUTH}.send()"),
+    )
 
-if crit_fail:
-    print("\nERROR: one or more CRITICAL patches failed; aborting build")
+    # U2 / U3: Flutter 定制客户端也检查并提示更新;「下载」打开 config server 的下载跳转
+    patch(
+        "flutter/lib/common.dart",
+        "U2 check update",
+        (r"if \(!isWeb\) \{\n(\s*)if \(!bind\.isCustomClient\(\)\) \{", r"if (!isWeb) {\n\1if (true) {"),
+    )
+    patch(
+        "flutter/lib/desktop/pages/desktop_home_page.dart",
+        "U2/U3 desktop update card",
+        (
+            r"if \(!bind\.isCustomClient\(\) &&\s*updateUrl\.isNotEmpty &&\s*!isCardClosed &&\s*"
+            r"bind\.mainUriPrefixSync\(\)\.contains\('rustdesk'\)\) \{",
+            "if (updateUrl.isNotEmpty && !isCardClosed) {",
+        ),
+        (
+            r"final Uri url = Uri\.parse\('[^']*'\);",
+            f"final Uri url = Uri.parse('{SERVER}/download/${{isWindows ? 'windows' : isMacOS ? 'macos' : 'linux'}}');",
+        ),
+    )
+    patch(
+        "flutter/lib/mobile/pages/connection_page.dart",
+        "U2/U3 android update bar",
+        (r"if \(!bind\.isCustomClient\(\) && !isIOS\)", "if (!isIOS)"),
+        (r"final url = '[^']*';", f"final url = '{SERVER}/download/android';"),
+    )
+
+
+if failed:
+    print(f"\nERROR: {len(failed)} patch(es) failed, aborting build: {', '.join(failed)}")
     sys.exit(1)
-
-print("\nAll critical patches applied.")
+print("\nAll patches applied.")

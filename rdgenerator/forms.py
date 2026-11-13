@@ -7,12 +7,16 @@ from PIL import Image
 # scripts in every generator workflow: & \ | corrupt the substitution
 # silently, ' " $ ` break shell quoting, CR/LF break sed addressing.
 UNSAFE_NAME_CHARS = re.compile(r'[&\\|\'"$`\r\n]')
+# Passed to allow_custom_update.py: a 32-byte ed25519 public key, base64 or hex.
+UPDATE_PUBLIC_KEY = re.compile(r'[A-Za-z0-9+/]{43}=|[0-9a-fA-F]{64}')
+# Interpolated into the workflow's version sed; the custom update flow compares x.y.z+build.
+APP_VERSION = re.compile(r'[0-9]+\.[0-9]+\.[0-9]+(\+[0-9]+)?')
 
 class GenerateForm(forms.Form):
     sh_secret_field = forms.CharField(required=False)
     #Platform
     platform = forms.ChoiceField(choices=[('windows','Windows 64Bit'),('windows-x86','Windows 32Bit'),('linux','Linux'),('android','Android'),('macos','macOS')], initial='windows')
-    version = forms.ChoiceField(choices=[('master','nightly'),('1.5.3','1.5.3'),('1.5.1','1.5.1'),('1.5.0','1.5.0')], initial='1.5.3')
+    version = forms.ChoiceField(choices=[('master','nightly'),('1.5.3','1.5.3'),('1.5.1','1.5.1')], initial='1.5.3')
     help_text="'master' is the development version (nightly build) with the latest features but may be less stable"
     delayFix = forms.BooleanField(initial=True, required=False)
 
@@ -46,6 +50,8 @@ class GenerateForm(forms.Form):
     #Remote config center (rustdesk-config-server) —— 运行时下发 host/key/api + 自定义更新
     configServer = forms.CharField(label="Config Server URL (rustdesk-config-server)", required=False)
     configToken = forms.CharField(label="Config Server Token", required=False)
+    update_public_key = forms.CharField(label="Update Public Key", required=False)
+    app_version = forms.CharField(label="Custom App Version", required=False)
 
     #Visual
     iconfile = forms.FileField(label="Custom App Icon (in .png format)", required=False, widget=forms.FileInput(attrs={'accept': 'image/png'}))
@@ -135,3 +141,15 @@ class GenerateForm(forms.Form):
 
     def clean_compname(self):
         return self._reject_unsafe_name_chars('compname')
+
+    def clean_update_public_key(self):
+        value = self.cleaned_data.get('update_public_key', '')
+        if value and not UPDATE_PUBLIC_KEY.fullmatch(value):
+            raise forms.ValidationError("Must be a 32-byte ed25519 public key in base64 or hex.")
+        return value
+
+    def clean_app_version(self):
+        value = self.cleaned_data.get('app_version', '')
+        if value and not APP_VERSION.fullmatch(value):
+            raise forms.ValidationError("Must look like 1.5.3 or 1.5.3+1.")
+        return value
