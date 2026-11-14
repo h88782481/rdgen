@@ -12,6 +12,11 @@ UPDATE_PUBLIC_KEY = re.compile(r'[A-Za-z0-9+/]{43}=|[0-9a-fA-F]{64}')
 # Interpolated into the workflow's version sed; the custom update flow compares x.y.z+build.
 APP_VERSION = re.compile(r'[0-9]+\.[0-9]+\.[0-9]+(\+[0-9]+)?')
 
+# Theme colours are interpolated into 0xAARRGGBB Dart literals by the
+# workflow patch. Accept the same forms a user types in a colour picker, but
+# only ever forward a canonical #RRGGBB (blank means "stock RustDesk colour").
+HEX_COLOR_RE = re.compile(r'^#?[0-9A-Fa-f]{6}$')
+
 class GenerateForm(forms.Form):
     sh_secret_field = forms.CharField(required=False)
     #Platform
@@ -36,7 +41,7 @@ class GenerateForm(forms.Form):
         ('settingsY', 'No, enable settings'),
         ('settingsN', 'Yes, DISABLE settings')
     ], initial='settingsY')
-    androidappid = forms.CharField(label="Custom Android App ID (replaces 'com.carriez.flutter_hbb')", required=False)
+    androidappid = forms.CharField(label="Custom Android App ID (installed identity; leave blank to use com.carriez.flutter_hbb)", required=False)
 
     #Custom Server
     serverIP = forms.CharField(label="Host", required=False)
@@ -66,6 +71,32 @@ class GenerateForm(forms.Form):
         ('system', 'Follow System')
     ], initial='system')
     themeDorO = forms.ChoiceField(choices=[('default', 'Default'),('override', 'Override')], initial='default')
+    # Blank = keep the stock RustDesk colour. The workflows apply these to the
+    # Flutter theme via .github/patches/themeColors.py.
+    themeColor = forms.CharField(
+        label="Accent color", required=False,
+        widget=forms.TextInput(attrs={
+            'placeholder': '#0071FF (stock)', 'class': 'hex-color',
+            'spellcheck': 'false', 'autocomplete': 'off',
+        }))
+    themeSurfaceLight = forms.CharField(
+        label="Light surface color", required=False,
+        widget=forms.TextInput(attrs={
+            'placeholder': '#EFEFF2 (stock)', 'class': 'hex-color',
+            'spellcheck': 'false', 'autocomplete': 'off',
+        }))
+    themeSurfaceDark = forms.CharField(
+        label="Dark surface color", required=False,
+        widget=forms.TextInput(attrs={
+            'placeholder': '#18191E (stock)', 'class': 'hex-color',
+            'spellcheck': 'false', 'autocomplete': 'off',
+        }))
+    themeMeColor = forms.CharField(
+        label="ID / \u201cme\u201d color", required=False,
+        widget=forms.TextInput(attrs={
+            'placeholder': '#21790B (stock)', 'class': 'hex-color',
+            'spellcheck': 'false', 'autocomplete': 'off',
+        }))
 
     #Security
     passApproveMode = forms.ChoiceField(choices=[('password','Accept sessions via password'),('click','Accept sessions via click'),('password-click','Accepts sessions via both')],initial='password-click')
@@ -153,3 +184,27 @@ class GenerateForm(forms.Form):
         if value and not APP_VERSION.fullmatch(value):
             raise forms.ValidationError("Must look like 1.5.3 or 1.5.3+1.")
         return value
+
+    def _clean_hex_color(self, field):
+        """Accept #RRGGBB or RRGGBB; return canonical #RRGGBB or ''."""
+        value = (self.cleaned_data.get(field) or '').strip()
+        if not value:
+            return ''
+        if not HEX_COLOR_RE.match(value):
+            raise forms.ValidationError(
+                "Enter a 6-digit hex color such as #0071FF, or leave it blank "
+                "for the stock RustDesk color."
+            )
+        return '#' + value.lstrip('#').upper()
+
+    def clean_themeColor(self):
+        return self._clean_hex_color('themeColor')
+
+    def clean_themeSurfaceLight(self):
+        return self._clean_hex_color('themeSurfaceLight')
+
+    def clean_themeSurfaceDark(self):
+        return self._clean_hex_color('themeSurfaceDark')
+
+    def clean_themeMeColor(self):
+        return self._clean_hex_color('themeMeColor')

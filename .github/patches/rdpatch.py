@@ -19,11 +19,11 @@ rdpatch.py — 给 RustDesk 客户端源码打入「远程配置中心」和「�
   H5  Sciter(32 位)只能整窗隐藏,只在仅密码接受时隐藏,保证点击接受可用
 
 自定义更新(RD_CUSTOM_UPDATE=true,即 rdgen 填了 update_public_key):
-  更新检查地址、信任公钥、放开定制客户端检查更新由 allow_custom_update.py 完成,本脚本:
+  更新检查地址、信任公钥、放开定制客户端检查与更新入口由 allow_custom_update.py 完成,本脚本:
   U0  校验 Config Server 地址可用于更新,且 allow_custom_update.py 每处改动都已生效
       (它所在的 workflow 步骤 continue-on-error,失败不会中断构建)
   U1  版本检查、签名清单、安装包下载都带 Authorization: Bearer <token>
-  U2  Flutter 定制客户端也显示更新提示(桌面首页卡片、Android 更新条)
+  U2  校验 Flutter 定制客户端更新门禁已放开(桌面首页卡片、Android 更新条)
   U3  浏览器下载按钮 -> <server>/download/<platform>
 
 配置来自环境变量:
@@ -636,30 +636,36 @@ if CUSTOM_UPDATE:
         (r"client\.get\(download_url\)\.send\(\)", f"client.get(download_url){AUTH}.send()"),
     )
 
-    # U2 / U3: Flutter 定制客户端也检查并提示更新;「下载」打开 config server 的下载跳转
-    patch(
+    # U2 / U3: Flutter 定制客户端更新门禁已由 allow_custom_update.py 放开;
+    # 「下载」打开 config server 的按平台下载跳转
+    verify(
         "flutter/lib/common.dart",
-        "U2 check update",
-        (r"if \(!isWeb\) \{\n(\s*)if \(!bind\.isCustomClient\(\)\) \{", r"if (!isWeb) {\n\1if (true) {"),
+        "U2 allow_custom_update: flutter check update",
+        present=["void checkUpdate() {\n  if (!isWeb) {\n    if (true) {"],
+        absent=["void checkUpdate() {\n  if (!isWeb) {\n    if (!bind.isCustomClient()) {"],
+    )
+    verify(
+        "flutter/lib/desktop/pages/desktop_home_page.dart",
+        "U2 allow_custom_update: desktop update card",
+        present=["if (updateUrl.isNotEmpty && !isCardClosed)"],
     )
     patch(
         "flutter/lib/desktop/pages/desktop_home_page.dart",
-        "U2/U3 desktop update card",
+        "U3 desktop download url",
         (
-            r"if \(!bind\.isCustomClient\(\) &&\s*updateUrl\.isNotEmpty &&\s*!isCardClosed &&\s*"
-            r"bind\.mainUriPrefixSync\(\)\.contains\('rustdesk'\)\) \{",
-            "if (updateUrl.isNotEmpty && !isCardClosed) {",
-        ),
-        (
-            r"final Uri url = Uri\.parse\('[^']*'\);",
+            r"final Uri url = Uri\.parse\((?:updateUrl|'[^']*')\);",
             f"final Uri url = Uri.parse('{SERVER}/download/${{isWindows ? 'windows' : isMacOS ? 'macos' : 'linux'}}');",
         ),
     )
+    verify(
+        "flutter/lib/mobile/pages/connection_page.dart",
+        "U2 allow_custom_update: android update bar",
+        absent=["if (!bind.isCustomClient() && !isIOS)"],
+    )
     patch(
         "flutter/lib/mobile/pages/connection_page.dart",
-        "U2/U3 android update bar",
-        (r"if \(!bind\.isCustomClient\(\) && !isIOS\)", "if (!isIOS)"),
-        (r"final url = '[^']*';", f"final url = '{SERVER}/download/android';"),
+        "U3 android download url",
+        (r"final url = (?:updateUrl|'[^']*');", f"final url = '{SERVER}/download/android';"),
     )
 
 

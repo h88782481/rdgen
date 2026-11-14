@@ -76,8 +76,8 @@
     "Disable Settings:": "禁用设置：",
     "No, enable settings": "否，启用设置",
     "Yes, DISABLE settings": "是，禁用设置",
-    "Custom Android App ID (replaces 'com.carriez.flutter_hbb', leave blank to use default):":
-      "自定义 Android 应用 ID（替换 'com.carriez.flutter_hbb'，留空则使用默认）：",
+    "Custom Android App ID (installed identity; leave blank to use com.carriez.flutter_hbb):":
+      "自定义 Android 应用 ID（安装后包名标识；留空则使用默认 com.carriez.flutter_hbb）：",
 
     "Custom Server": "自定义服务器",
     "Host:": "主机（Host）：",
@@ -119,9 +119,11 @@
     "Allow hiding the connection window from remote screen.": "允许在远程屏幕上隐藏连接窗口。",
 
     "Visual": "外观",
+    "Branding": "品牌形象",
     "Custom App Icon (in .png format)": "自定义应用图标（.png 格式）",
     "Custom App Logo (in .png format)": "自定义应用 Logo（.png 格式）",
     "Custom Privacy Screen (in .png format)": "自定义隐私屏幕（.png 格式）",
+    "Theme": "主题配色",
     "Theme:": "主题：",
     "Light": "浅色",
     "Dark": "深色",
@@ -130,6 +132,24 @@
     "Override": "强制覆盖",
     "*Default sets the theme but allows the client to change it, Override sets the theme permanently.":
       "*“默认”设置主题但允许客户端修改，“强制覆盖”则永久固定主题。",
+    "Theme colors": "主题颜色",
+    "(optional; blank keeps the stock RustDesk color. Flutter clients only — not the 32-bit Windows/Sciter build.)":
+      "（可选；留空则保持 RustDesk 默认配色。仅适用于 Flutter 客户端 — 不支持 32 位 Windows/Sciter 构建。）",
+    "Accent": "强调色",
+    "Light surface": "浅色面板",
+    "Dark surface": "深色面板",
+    "ID / “me”": "本机 ID / “我”",
+    "#0071FF (stock)": "#0071FF（默认）",
+    "#EFEFF2 (stock)": "#EFEFF2（默认）",
+    "#18191E (stock)": "#18191E（默认）",
+    "#21790B (stock)": "#21790B（默认）",
+    "Client preview": "客户端预览",
+    "light": "浅色",
+    "dark": "深色",
+    "ready to connect": "就绪，可连接",
+    "Connect": "连接",
+    "Approximate preview. The selected colors are compiled into the client at build time.":
+      "近似效果预览。所选颜色会在编译构建时直接写入客户端。",
 
     "Permissions": "权限",
     "The following permissions are enforced (override) and cannot be changed by the client. This is required so they also apply to machines that already have saved settings.":
@@ -164,9 +184,14 @@
     "Source Code on Github": "GitHub 源代码",
     "Donate": "赞助",
 
-    // generator.html 里的 JS 提示
+    // generator.html 里的 JS 提示与表单校验报错
     "Filename is required.": "文件名不能为空。",
     "Error loading data. Invalid JSON file.": "加载数据出错：无效的 JSON 文件。",
+    "Enter a 6-digit hex color such as #0071FF, or leave it blank for the stock RustDesk color.":
+      "请输入 6 位十六进制颜色值（例如 #0071FF），或留空以使用 RustDesk 默认颜色。",
+    "Must be a 32-byte ed25519 public key in base64 or hex.":
+      "必须是 32 字节的 ed25519 公钥（Base64 或十六进制格式）。",
+    "Must look like 1.5.3 or 1.5.3+1.": "格式必须类似 1.5.3 或 1.5.3+1。",
 
     // ---------- waiting.html ----------
     "Generating Build": "正在生成构建",

@@ -207,10 +207,9 @@ jobs:
           sed -i -e 's|"rustdesk.exe"|"${{ env.filename }}"|' ./flutter/windows/runner/Runner.rc
           sed -i -e 's|"RustDesk"|"${{ env.appname }}"|' ./flutter/windows/runner/Runner.rc
           # ./src/lang/en.rs
-          # change powered by rustdek to powered by compname
-          if [ ! -z "${{ env.compname }}" ]; then
-            find ./src/lang -name "*.rs" -exec sed -i '/powered_by_me/s|RustDesk|${{ env.compname }}|g' {} \;
-          fi
+          # The in-app "Powered by" link is removed at runtime through
+          # hide-powered-by-me=Y in custom_.txt (see generate_custom_client),
+          # so the powered_by_me translations are left alone.
           find ./src/lang -name "*.rs" -exec sed -i -e 's|RustDesk|${{ env.appname }}|' {} \;
           sed -i -e 's|RustDesk|${{ env.appname }}|' ./res/msi/Package/License.rtf
 
@@ -356,6 +355,12 @@ jobs:
             Invoke-WebRequest -Uri https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/removeSetupServerTip.diff -OutFile removeSetupServerTip.diff
             git apply removeSetupServerTip.diff  
 
+      - name: apply theme colors
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/themeColors.py -OutFile themeColors.py
+          python themeColors.py
+
       - name: Patch remote printer port to spool file
         shell: python
         run: |
@@ -449,10 +454,14 @@ jobs:
         if: ${{ env.delayFix == 'true' }}
         shell: bash
         run: |
-          # Precise fix: only extend the direct-connection condition with the
-          # key check, instead of globally replacing !key.is_empty() with
-          # false (which would also disable TCP encryption and UDP logic).
-          sed -i -e 's#if is_local || peer_nat_type == NatType::SYMMETRIC {#if is_local || peer_nat_type == NatType::SYMMETRIC || !key.is_empty() {#' ./src/client.rs
+          # Skip the optional secure_tcp handshake to the rendezvous server.
+          # The open-source rustdesk-server never sends KeyExchange, so when an
+          # access_token is set (third-party API login) the client waits for
+          # READ_TIMEOUT and fails with:
+          # "Failed to secure tcp: deadline has elapsed: Please try later(0)".
+          # Matches DVForge's delay fix. Safe on 1.4.x-1.5.x/master: the only
+          # !key.is_empty() occurrences in client.rs are the two secure_tcp gates.
+          sed -i -e 's|!key.is_empty()|false|' ./src/client.rs
           grep -n "key.is_empty()" ./src/client.rs || true
 
       - name: use X for offline display instead of orange circle
@@ -635,11 +644,24 @@ jobs:
       - name: Build msi
         continue-on-error: true
         if: env.UPLOAD_ARTIFACT == 'true'
+        env:
+          APP_VERSION: ${{ inputs.app_version }}
         run: |
+          # MSI ProductVersion must be numeric, so strip build metadata such as
+          # "+078" here. The client/updater keeps the full version; the MSI uses
+          # the numeric base and preprocess.py adds its own revision.
+          $msiVersion = ''
+          if ($env:APP_VERSION -match '^(\d+)\.(\d+)\.(\d+)') {
+            $msiVersion = "$($Matches[1]).$($Matches[2]).$($Matches[3])"
+          }
           $myappname = "${{ env.appname }}" -replace '\s','_'
           cp "rustdesk/${{ env.appname }}.exe" "rustdesk/${myappname}.exe" -ErrorAction SilentlyContinue
           pushd ./res/msi
-          python preprocess.py --app-name "$myappname" --arp -d ../../rustdesk
+          if ($msiVersion) {
+            python preprocess.py --app-name "$myappname" --arp -d ../../rustdesk --version "$msiVersion"
+          } else {
+            python preprocess.py --app-name "$myappname" --arp -d ../../rustdesk
+          }
           nuget restore msi.sln
           msbuild msi.sln -p:Configuration=Release -p:Platform=x64 /p:TargetVersion=Windows10
           cp ./Package/bin/x64/Release/en-us/Package.msi ../../SignOutput/rustdesk-latest.msi
